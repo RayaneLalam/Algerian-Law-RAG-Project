@@ -5,7 +5,6 @@ from config.settings import DEEPSEEK_API_KEY
 
 class LLM_Service:
     def __init__(self):
-        # Initialize OpenAI client for DeepSeek on OpenRouter
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=DEEPSEEK_API_KEY,
@@ -32,4 +31,29 @@ class LLM_Service:
             return completion.choices[0].message.content
         except Exception as e:
             return f"Error while contacting LLM: {e}"
-
+    
+    def get_completion_stream(self, message: str):
+        """
+        Streaming completion - yields chunks of text as they arrive.
+        
+        Args:
+            message (str): The user's query or processed prompt.
+        
+        Yields:
+            str: Each token/chunk from the model as it's generated.
+        """
+        try:
+            stream = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "user", "content": message}
+                ],
+                stream=True  # Enable streaming
+            )
+            
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    yield chunk.choices[0].delta.content
+                    
+        except Exception as e:
+            yield f"Error while contacting LLM: {e}"
