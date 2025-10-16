@@ -1,7 +1,7 @@
 # app.py
 import os
 import json
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response, stream_with_context
 from search_service.search_service import SearchService  # direct import of your SearchService
 from llm_service.llm_api import LLM_Service  # direct import of the LLM wrapper
 
@@ -131,6 +131,74 @@ def chat():
         return jsonify({"reply": reply}), 200
     except Exception as e:
         return jsonify({"error": f"Server error during search or LLM call: {e}"}), 500
+    
+
+
+
+
+
+def make_reply_stream(received_message: str, vectors_json_str: str):
+    """
+    Build a prompt and return a generator that streams the LLM response.
+    """
+    try:
+        results = json.loads(vectors_json_str) if vectors_json_str else []
+    except Exception:
+        results = []
+
+    context_block = _format_context_from_results(results)
+    template = _load_prompt_template(PROMPT_TEMPLATE_PATH)
+
+    try:
+        prompt = template.format(query=received_message, context=context_block)
+    except Exception:
+        prompt = f"Question: {received_message}\n\nContext:\n{context_block}"
+
+    # Return the streaming generator
+    return llm_service.get_completion_stream(prompt)
+
+
+
+@app.route("/chat_stream", methods=["GET", "POST"])
+def chat_stream():
+    if request.method == "POST":
+        data = request.get_json(silent=True)
+        if not data or "message" not in data:
+            return jsonify({"error": "Missing 'message' in JSON body"}), 400
+        message = str(data["message"])
+    else:
+        message = request.args.get("message")
+        if message is None:
+            return jsonify({"error": "Missing 'message' query parameter"}), 400
+
+    try:
+        top_k = 3
+        results = search_service.search(message, top_n=top_k)
+        vectors_json_str = json.dumps(results, ensure_ascii=False)
+        
+        def generate():
+            for chunk in make_reply_stream(message, vectors_json_str):
+                # Send each chunk as JSON
+                yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+        
+        return Response(
+            stream_with_context(generate()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no'
+            }
+        )
+    except Exception as e:
+        return jsonify({"error": f"Server error: {e}"}), 500
+
+
+
+
+
+
+
+
 
 
 if __name__ == "__main__":
