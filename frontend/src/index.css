@@ -1,68 +1,126 @@
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+@import "tailwindcss";
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+/* Custom Theme Configuration for Tailwind v4 */
+@theme {
+  /* Custom Colors */
+  --color-accent: #d4af37;
+  --color-accent-light: rgba(212, 175, 55, 0.08);
+  --color-accent-dark: rgba(212, 175, 55, 0.1);
+  --color-error: #ef4444;
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  /* Dark Theme Colors */
+  --color-dark-bg: #232323;
+  --color-dark-secondary: #2a2a2a;
+  --color-dark-tertiary: #3a3a3a;
+  --color-dark-hover: #3a3a3a;
+  --color-dark-border: #4a4b4a;
+  --color-dark-text-primary: #ffffff;
+  --color-dark-text-secondary: #adadad;
+
+  /* Light Theme Colors */
+  --color-light-bg: #ffffff;
+  --color-light-secondary: #f9f9f9;
+  --color-light-tertiary: #f0f0f0;
+  --color-light-hover: #f0f0f0;
+  --color-light-border: #e5e5e5;
+  --color-light-text-primary: #171717;
+  --color-light-text-secondary: #737373;
+
+  /* Fonts */
+  --font-inter: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-cairo: "Cairo", sans-serif;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
-a:hover {
-  color: #535bf2;
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  font-family: var(--font-inter);
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+[dir="rtl"] {
+  font-family: var(--font-cairo);
 }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
 
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #4a4b4a;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #525252;
+}
+
+/* Light mode scrollbar */
 @media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
+  ::-webkit-scrollbar-thumb {
+    background: #e5e5e5;
   }
-  a:hover {
-    color: #747bff;
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #a3a3a3;
   }
-  button {
-    background-color: #f9f9f9;
+}
+
+/* Animation for typing effect */
+@keyframes pulse-custom {
+  0%,
+  100% {
+    opacity: 1;
   }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse-custom {
+  animation: pulse-custom 2s ease-in-out infinite;
+}
+
+/* Focus states */
+input:focus,
+button:focus {
+  outline: none;
+}
+
+@keyframes bottomGlow {
+  0% {
+    background-size: 100% 100%;
+    background-position: center 100%;
+  }
+  50% {
+    background-size: 120% 120%;
+    background-position: center 98%;
+  }
+  100% {
+    background-size: 100% 100%;
+    background-position: center 100%;
+  }
+}
+
+.welcome-bg {
+  animation: bottomGlow 14s ease-in-out infinite;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  background-position: center 100%;
+  background-size: cover;
+  transition: background 0.5s ease;
+  filter: blur(0px);
 }
