@@ -2,3 +2,8 @@ laws.index
 laws.json
 laws.index.meta
 config/*
+dummydata/*
+app/config/*
+
+
+*.db

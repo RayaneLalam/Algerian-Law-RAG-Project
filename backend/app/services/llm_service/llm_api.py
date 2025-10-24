@@ -1,6 +1,6 @@
 # llm_service.py
 from openai import OpenAI
-from config.settings import DEEPSEEK_API_KEY
+from app.config.settings import DEEPSEEK_API_KEY
 
 
 class LLM_Service:
