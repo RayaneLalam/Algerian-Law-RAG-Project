@@ -21,11 +21,8 @@ def create_access_token(user_id, role, expires_delta=None):
 
 def decode_token(token):
     secret = current_app.config.get("JWT_SECRET", current_app.config.get("SECRET_KEY"))
-    print("🧩 Decoding with secret:", secret)
     try:
         payload = jwt.decode(token, secret, algorithms=["HS256"])
-        print("✅ Payload decoded:", payload)
         return payload
     except Exception as e:
-        print("❌ JWT decode error:", e)
-        return None
+        return e
