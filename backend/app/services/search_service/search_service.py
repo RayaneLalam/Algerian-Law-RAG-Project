@@ -7,8 +7,8 @@ import faiss
 import pickle
 from sentence_transformers import SentenceTransformer
 #from src.config.settings import DATA_PATH, VECTOR_DB_PATH, TOP_N_RESULTS
-DATA_PATH = "laws.json"
-VECTOR_DB_PATH = "laws.index"
+DATA_PATH = "data/laws.json"
+VECTOR_DB_PATH = "data/laws.index"
 TOP_N_RESULTS = 3
 # Configure logging
 logging.basicConfig(level=logging.INFO,
