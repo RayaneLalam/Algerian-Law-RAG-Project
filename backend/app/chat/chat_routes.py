@@ -100,7 +100,7 @@ def chat_stream():
             conversation_id = chat_models.create_conversation(user_id, title=title)
 
         # store user message
-        chat_models.insert_message(conversation_id, "user", message)
+        #chat_models.insert_message(conversation_id, "user", message)
 
         # prepare context
         top_k = 3
@@ -118,4 +118,57 @@ def chat_stream():
         )
     except Exception as e:
         current_app.logger.exception("chat_stream error")
+        return jsonify({"error": f"Server error: {e}"}), 500
+    
+
+
+@chat_bp.route("/dummy_chat_stream", methods=["GET", "POST"])
+def chat_stream_dummy():
+    """
+    Dummy endpoint (no auth, no DB).
+    - Accepts message (POST JSON or GET query).
+    - Streams real LLM response (via stream_assistant_reply).
+    """
+
+    # Get message from JSON or query
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        if "message" not in data:
+            return jsonify({"error": "Missing 'message' in JSON body"}), 400
+        message = str(data["message"])
+    else:
+        message = request.args.get("message")
+        if message is None:
+            return jsonify({"error": "Missing 'message' query parameter"}), 400
+
+    try:
+        # Search for relevant articles
+        top_k = 5  # Increased to get more context
+        results = search_service.search(message, top_n=top_k)
+        
+        # Debug logging
+        current_app.logger.info(f"Query: {message}")
+        current_app.logger.info(f"Found {len(results)} results")
+        
+        for i, result in enumerate(results, 1):
+            doc = result.get("document", {})
+            current_app.logger.info(
+                f"Result {i}: Article {doc.get('article', '?')} "
+                f"(similarity: {result.get('similarity', 0):.3f}) - "
+                f"Content preview: {doc.get('content', '')[:100]}"
+            )
+        
+        vectors_json_str = json.dumps(results, ensure_ascii=False)
+
+        # Stream LLM reply (real response)
+        return Response(
+            stream_with_context(stream_assistant_reply(message, vectors_json_str, conversation_id=None)),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no"
+            }
+        )
+    except Exception as e:
+        current_app.logger.exception("chat_stream_dummy error")
         return jsonify({"error": f"Server error: {e}"}), 500

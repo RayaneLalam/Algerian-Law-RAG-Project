@@ -6,10 +6,13 @@ import numpy as np
 import faiss
 import pickle
 from sentence_transformers import SentenceTransformer
-#from src.config.settings import DATA_PATH, VECTOR_DB_PATH, TOP_N_RESULTS
-DATA_PATH = "data/laws.json"
-VECTOR_DB_PATH = "data/laws.index"
+
+# Configuration
+DATA_PATH = "data/constitution.json"
+METADATA_PATH = "data/constitution_metadata.json"
+VECTOR_DB_PATH = "data/constitution.index"
 TOP_N_RESULTS = 3
+
 # Configure logging
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -17,8 +20,10 @@ logger = logging.getLogger(__name__)
 
 class SearchService:
     """
-    Simplified search service that uses only vector embeddings (sentence-transformers + FAISS).
-    Expects DATA_PATH to be a JSON file containing a list of document dicts (e.g., laws).
+    Search service for the Algerian Constitution using vector embeddings.
+    Works with two JSON files:
+    - constitution.json: nested structure with titles/chapters/articles
+    - constitution_metadata.json: flat list of article references
     """
 
     def __init__(self,
@@ -37,7 +42,9 @@ class SearchService:
         self.model = SentenceTransformer(self.embedding_model_name)
 
         # In-memory state
-        self.chunks = []                # list of dicts (documents)
+        self.constitution_data = None   # Full nested JSON structure
+        self.metadata = []              # Flat list of article metadata
+        self.chunks = []                # List of searchable article dicts
         self.embedding_vectors = None   # numpy array (n_documents, dim)
         self.vector_index = None        # faiss index
         self.is_fitted = False
@@ -45,17 +52,63 @@ class SearchService:
         # Load on init
         self.load_data()
 
+    def _extract_articles_from_constitution(self):
+        """
+        Extract individual articles from the nested constitution structure.
+        Returns a list of article dicts with full context.
+        """
+        articles = []
+        
+        if not self.constitution_data:
+            return articles
+        
+        titles = self.constitution_data.get("titles", [])
+        
+        for title in titles:
+            title_number = title.get("title_number", "")
+            title_name = title.get("title_name", "")
+            
+            for chapter in title.get("chapters", []):
+                chapter_number = chapter.get("chapter_number", "")
+                chapter_name = chapter.get("chapter_name", "")
+                
+                for article in chapter.get("articles", []):
+                    article_number = article.get("article_number", "")
+                    content = article.get("content", "")
+                    
+                    # Create enriched article dict
+                    article_dict = {
+                        "title": title_number,
+                        "title_name": title_name,
+                        "chapter": chapter_number,
+                        "chapter_name": chapter_name,
+                        "article": article_number,
+                        "content": content,
+                        "full_reference": f"Titre {title_number}, Chapitre {chapter_number}, Article {article_number}"
+                    }
+                    articles.append(article_dict)
+        
+        logger.info(f"Extracted {len(articles)} articles from constitution")
+        return articles
+
     def _texts_from_chunks(self, chunks):
         """
-        Convert a list of chunk dicts to the text strings to embed.
-        Default behavior: combine 'titre' and 'texte' if present, otherwise str(chunk).
+        Convert article chunks to text strings for embedding.
+        Prioritizes content, with minimal context.
         """
         texts = []
         for c in chunks:
             if isinstance(c, dict):
-                titre = c.get("titre", "")
-                texte = c.get("texte", "")
-                combined = f"{titre} - {texte}".strip()
+                content = c.get("content", "")
+                
+                # For short articles (< 50 chars), add minimal context
+                # For longer articles, content alone is sufficient
+                if len(content) < 50:
+                    article_ref = f"Article {c.get('article', '')}"
+                    combined = f"{article_ref}: {content}"
+                else:
+                    combined = content
+                
                 if not combined:
                     combined = json.dumps(c, ensure_ascii=False)
                 texts.append(combined)
@@ -64,18 +117,32 @@ class SearchService:
         return texts
 
     def load_data(self):
-        """Load document JSON and (if present) vector DB + metadata."""
+        """Load constitution JSON, metadata, and vector DB."""
         try:
+            # Load main constitution file
             if not os.path.exists(DATA_PATH):
-                logger.warning(f"Data file {DATA_PATH} does not exist. Starting with empty dataset.")
+                logger.warning(f"Data file {DATA_PATH} does not exist.")
                 self.chunks = []
                 self.is_fitted = False
                 return False
 
             with open(DATA_PATH, "r", encoding="utf-8") as f:
-                self.chunks = json.load(f)
+                self.constitution_data = json.load(f)
+            logger.info(f"Loaded constitution from {DATA_PATH}")
 
-            logger.info(f"Loaded {len(self.chunks)} documents from {DATA_PATH}")
+            # Load metadata (optional, for reference)
+            if os.path.exists(METADATA_PATH):
+                with open(METADATA_PATH, "r", encoding="utf-8") as f:
+                    self.metadata = json.load(f)
+                logger.info(f"Loaded {len(self.metadata)} article metadata entries")
+
+            # Extract articles as searchable chunks
+            self.chunks = self._extract_articles_from_constitution()
+            
+            if not self.chunks:
+                logger.warning("No articles extracted from constitution")
+                self.is_fitted = False
+                return False
 
             # Try to load existing FAISS index + metadata
             vector_exists = os.path.exists(VECTOR_DB_PATH)
@@ -117,7 +184,7 @@ class SearchService:
                 return False
 
             if chunks_count is not None and chunks_count != len(self.chunks):
-                logger.warning("Chunks count in metadata differs from JSON. Rebuild required.")
+                logger.warning("Chunks count in metadata differs from extracted articles. Rebuild required.")
                 return False
 
             if self.vector_index.ntotal != len(self.chunks):
@@ -129,20 +196,19 @@ class SearchService:
 
         except Exception as e:
             logger.error(f"Failed to load vector DB: {e}")
-            # cleanup partial state
             self.vector_index = None
             self.embedding_vectors = None
             return False
 
     def _build_vector_db(self):
-        """Build FAISS index from scratch using current self.chunks."""
+        """Build FAISS index from scratch using current chunks."""
         try:
             if not self.chunks:
-                logger.warning("No documents available to build vector DB.")
+                logger.warning("No articles available to build vector DB.")
                 return False
 
             texts = self._texts_from_chunks(self.chunks)
-            logger.info("Encoding documents to embeddings...")
+            logger.info("Encoding articles to embeddings...")
             embeddings = self.model.encode(texts, show_progress_bar=True)
             embeddings = np.array(embeddings).astype("float32")
             self.embedding_vectors = embeddings
@@ -164,12 +230,10 @@ class SearchService:
             return False
 
     def _save_vector_db(self):
-        """Persist FAISS index and metadata (embedding vectors, counts)."""
+        """Persist FAISS index and metadata."""
         try:
-            # Write faiss index
             faiss.write_index(self.vector_index, VECTOR_DB_PATH)
 
-            # Save minimal metadata
             meta = {
                 "embedding_vectors": self.embedding_vectors,
                 "chunks_count": len(self.chunks),
@@ -178,59 +242,14 @@ class SearchService:
             with open(f"{VECTOR_DB_PATH}.meta", "wb") as f:
                 pickle.dump(meta, f)
 
-            logger.info(f"Saved FAISS index to {VECTOR_DB_PATH} and metadata to {VECTOR_DB_PATH}.meta")
+            logger.info(f"Saved FAISS index to {VECTOR_DB_PATH}")
             return True
         except Exception as e:
             logger.error(f"Error saving vector DB: {e}")
             return False
 
-    def add_documents(self, new_chunks):
-        """
-        Add new documents (list of dicts) to JSON and FAISS index.
-        If not fitted yet, it rebuilds the index from all chunks.
-        """
-        if not new_chunks:
-            logger.warning("No new chunks provided.")
-            return False
-
-        try:
-            # Append to in-memory chunks and persist JSON immediately
-            original_count = len(self.chunks)
-            self.chunks.extend(new_chunks)
-            with open(DATA_PATH, "w", encoding="utf-8") as f:
-                json.dump(self.chunks, f, ensure_ascii=False, indent=2)
-            logger.info(f"Appended {len(new_chunks)} documents to {DATA_PATH} (total now {len(self.chunks)})")
-
-            # If not fitted, build full DB
-            if not self.is_fitted or self.vector_index is None:
-                return self._build_vector_db()
-
-            # Otherwise, encode only new texts and add to FAISS + metadata
-            new_texts = self._texts_from_chunks(new_chunks)
-            new_embeddings = self.model.encode(new_texts, show_progress_bar=False)
-            new_embeddings = np.array(new_embeddings).astype("float32")
-
-            # Add to faiss index
-            self.vector_index.add(new_embeddings)
-
-            # Update embedding_vectors
-            if self.embedding_vectors is None:
-                self.embedding_vectors = new_embeddings
-            else:
-                self.embedding_vectors = np.vstack([self.embedding_vectors, new_embeddings])
-
-            # Persist updated index & metadata
-            self._save_vector_db()
-            logger.info(f"Added {len(new_chunks)} vectors to FAISS (was {original_count}, now {self.vector_index.ntotal})")
-            self.is_fitted = True
-            return True
-
-        except Exception as e:
-            logger.error(f"Error adding documents: {e}")
-            return False
-
     def _vector_search(self, query, top_n=TOP_N_RESULTS):
-        """Return top_n matches for the query as [(doc_dict, score), ...]. Score is similarity in (0,1]."""
+        """Return top_n matches for the query."""
         if self.vector_index is None or self.vector_index.ntotal == 0:
             logger.warning("Vector index is not initialized or empty.")
             return []
@@ -248,7 +267,6 @@ class SearchService:
             if idx == -1:
                 continue
             dist = float(distances[0][i])
-            # Convert L2 distance to a normalized similarity score: s = 1 / (1 + dist)
             similarity = 1.0 / (1.0 + dist)
             doc = self.chunks[idx] if idx < len(self.chunks) else {}
             result = {
@@ -262,7 +280,7 @@ class SearchService:
 
     def search(self, query: str, top_n: int = TOP_N_RESULTS):
         """
-        Public search method (embedding-only).
+        Public search method.
         Returns list of result dicts sorted by best similarity.
         """
         if not self.is_fitted:
@@ -274,11 +292,24 @@ class SearchService:
         return self._vector_search(query, top_n=top_n)
 
     def format_search_results(self, results):
-        """Return a human-friendly string list from results (optional)."""
+        """Return a human-friendly string list from results."""
         formatted = []
         for i, r in enumerate(results, start=1):
             doc = r.get("document", {})
-            titre = doc.get("titre", doc.get("id", f"doc_{r.get('index')}"))
+            ref = doc.get("full_reference", f"Article {doc.get('article', '?')}")
             sim = r.get("similarity", 0.0)
-            formatted.append(f"{i}. [{sim:.4f}] {titre}")
+            content_preview = doc.get("content", "")[:100]
+            formatted.append(f"{i}. [{sim:.4f}] {ref}\n   {content_preview}...")
         return formatted
+
+    def get_article_by_reference(self, title, chapter, article):
+        """
+        Retrieve a specific article by its reference.
+        Returns the article dict or None if not found.
+        """
+        for chunk in self.chunks:
+            if (chunk.get("title") == title and 
+                chunk.get("chapter") == chapter and 
+                chunk.get("article") == article):
+                return chunk
+        return None

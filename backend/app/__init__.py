@@ -2,6 +2,7 @@
 from flask import Flask
 from database import db_setup
 from app.config import settings  # import your settings module
+from app.evaluation.api import evaluation_bp
 
 def create_app():
     app = Flask(__name__)
@@ -16,9 +17,14 @@ def create_app():
     # Register blueprints
     from .chat.chat_routes import chat_bp
     from .auth import bp as auth_bp
+    from flask_cors import CORS
+
+    CORS(app, origins=["http://localhost:3000", "http://localhost:5173"], supports_credentials=True, expose_headers=["Content-Type"])
+
 
     app.register_blueprint(chat_bp)
     app.register_blueprint(auth_bp)
+    app.register_blueprint(evaluation_bp, url_prefix='/evaluation')
 
     # Teardown
     app.teardown_appcontext(db_setup.close_connection)

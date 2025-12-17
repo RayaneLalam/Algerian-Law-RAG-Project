@@ -1,59 +1,62 @@
 # llm_service.py
-from openai import OpenAI
-from app.config.settings import DEEPSEEK_API_KEY
+import requests
+import json
 
 
 class LLM_Service:
     def __init__(self):
-        self.client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=DEEPSEEK_API_KEY,
-        )
-        self.model = "google/gemma-3-27b-it:free"
+        self.base_url = "http://localhost:11434/api"
+        self.model = "deepseek-r1:8b"
 
     def get_completion(self, message: str) -> str:
         """
-        Send a processed prompt to the LLM and return its response.
-        
-        Args:
-            message (str): The user's query or processed prompt.
-        
-        Returns:
-            str: The model's textual response.
+        Send a prompt to the local Ollama LLM and return its response.
         """
         try:
-            completion = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "user", "content": message}
-                ]
+            response = requests.post(
+                f"{self.base_url}/chat",
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {"role": "user", "content": message}
+                    ],
+                    "stream": False
+                },
+                timeout=300
             )
-            return completion.choices[0].message.content
+
+            response.raise_for_status()
+            data = response.json()
+            return data["message"]["content"]
+
         except Exception as e:
-            return f"Error while contacting LLM: {e}"
-    
+            return f"Error while contacting local LLM: {e}"
+
     def get_completion_stream(self, message: str):
         """
         Streaming completion - yields chunks of text as they arrive.
-        
-        Args:
-            message (str): The user's query or processed prompt.
-        
-        Yields:
-            str: Each token/chunk from the model as it's generated.
         """
         try:
-            stream = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "user", "content": message}
-                ],
-                stream=True  # Enable streaming
-            )
-            
-            for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
-                    yield chunk.choices[0].delta.content
-                    
+            with requests.post(
+                f"{self.base_url}/chat",
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {"role": "user", "content": message}
+                    ],
+                    "stream": True
+                },
+                stream=True,
+                timeout=300
+            ) as response:
+
+                response.raise_for_status()
+
+                for line in response.iter_lines():
+                    if line:
+                        data = json.loads(line.decode("utf-8"))
+                        if "message" in data and "content" in data["message"]:
+                            yield data["message"]["content"]
+
         except Exception as e:
-            yield f"Error while contacting LLM: {e}"
+            yield f"Error while contacting local LLM: {e}"

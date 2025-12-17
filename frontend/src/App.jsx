@@ -37,106 +37,115 @@ export const App = () => {
   };
 
   const handleSendMessage = async (text) => {
-    if (!text.trim() || isLoading) return;
+      if (!text.trim() || isLoading) return;
 
-    setIsInputCentered(false);
-    setIsLoading(true);
+      setIsInputCentered(false);
+      setIsLoading(true);
 
-    const userMessage = text;
-    const updatedMessages = [
-      ...messages,
-      { role: "user", content: userMessage },
-      { role: "assistant", content: "" },
-    ];
-    setMessages(updatedMessages);
+      const userMessage = text;
+      const updatedMessages = [
+        ...messages,
+        { role: "user", content: userMessage },
+        { role: "assistant", content: "" },
+      ];
+      setMessages(updatedMessages);
 
-    // Save or update conversation
-    if (!currentConversationId) {
-      const newId = Date.now().toString();
-      setCurrentConversationId(newId);
-      setConversations((prev) => [
-        ...prev,
-        {
-          id: newId,
-          title: userMessage.substring(0, 50),
-          messages: updatedMessages,
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-    } else {
-      setConversations((prev) =>
-        prev.map((conv) =>
-          conv.id === currentConversationId
-            ? { ...conv, messages: updatedMessages }
-            : conv
-        )
-      );
-    }
+      // Save or update conversation
+      let convId = currentConversationId;
+      if (!convId) {
+        convId = Date.now().toString();
+        setCurrentConversationId(convId);
+        setConversations((prev) => [
+          ...prev,
+          {
+            id: convId,
+            title: userMessage.substring(0, 50),
+            messages: updatedMessages,
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+      } else {
+        setConversations((prev) =>
+          prev.map((conv) =>
+            conv.id === convId ? { ...conv, messages: updatedMessages } : conv
+          )
+        );
+      }
 
-    // Simulate API delay
-    await new Promise((resolve) => setTimeout(resolve, 800));
+      try {
+        // Send request to backend
+        const token = localStorage.getItem("token"); // JWT stored locally after login
+        const response = await fetch("http://localhost:5000/dummy_chat_stream", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            message: userMessage,
+            conversation_id: currentConversationId, // send null for new conv
+          }),
+        });
 
-    const dummyResponse = isArabic
-      ? `**إجابتي هي:**  
+        if (!response.ok || !response.body) {
+          throw new Error(`Server error: ${response.statusText}`);
+        }
 
-أنا **Konan.ai**، مساعد ذكاء اصطناعي متخصص في **القانون الجزائري**.  
-يمكنني مساعدتك في:  
+        // Read streaming chunks (SSE)
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let displayedText = "";
 
-- **شرح النصوص القانونية**  
-- **تلخيص القوانين والمراسيم**  
-- **ترجمة المواد بين العربية والفرنسية**  
-- **تقديم إجابات مدعومة بالمراجع القانونية**  
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-ما هو النص أو السؤال القانوني الذي ترغب في فهمه؟`
-      : `**Voici ma réponse :**  
+          const chunk = decoder.decode(value, { stream: true });
 
-Je suis **Konan.ai**, un assistant IA spécialisé dans **le droit algérien**.  
-Je peux vous aider à :  
+          // SSE format → lines start with "data:"
+          const lines = chunk
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.replace(/^data:\s*/, "").trim());
 
-- **Expliquer les textes juridiques**  
-- **Résumer les lois et décrets**  
-- **Traduire les articles entre l’arabe et le français**  
-- **Fournir des réponses basées sur des sources juridiques fiables**  
+          for (const line of lines) {
+            if (line === "[DONE]") break;
 
-Quel texte ou quelle question juridique souhaitez-vous comprendre ?`;
+            displayedText += line + " ";
 
-    let displayedText = "";
-    const words = dummyResponse.split(" ");
+            setMessages((prev) => {
+              const updated = [...prev];
+              updated[updated.length - 1] = {
+                ...updated[updated.length - 1],
+                content: displayedText.trim(),
+              };
+              return updated;
+            });
+          }
+        }
 
-    for (let i = 0; i < words.length; i++) {
-      displayedText += words[i] + (i < words.length - 1 ? " " : "");
+        // Save final message to conversation
+        setConversations((prev) =>
+          prev.map((conv) =>
+            conv.id === convId
+              ? {
+                  ...conv,
+                  messages: [
+                    ...updatedMessages.slice(0, -1),
+                    { role: "assistant", content: displayedText.trim() },
+                  ],
+                }
+              : conv
+          )
+        );
+      } catch (err) {
+        console.error("Chat stream error:", err);
+        alert("Error connecting to the assistant.");
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
-      setMessages((prev) => {
-        const updated = [...prev];
-        updated[updated.length - 1] = {
-          ...updated[updated.length - 1],
-          content: displayedText,
-        };
-        return updated;
-      });
-
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-
-    // Update conversation with final assistant message
-    if (currentConversationId) {
-      setConversations((prev) =>
-        prev.map((conv) =>
-          conv.id === currentConversationId
-            ? {
-                ...conv,
-                messages: [
-                  ...updatedMessages.slice(0, -1),
-                  { role: "assistant", content: dummyResponse },
-                ],
-              }
-            : conv
-        )
-      );
-    }
-
-    setIsLoading(false);
-  };
 
   const handleSelectConversation = (id) => {
     const conversation = conversations.find((c) => c.id === id);

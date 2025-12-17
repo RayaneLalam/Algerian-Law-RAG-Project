@@ -8,6 +8,7 @@ export const useEvaluations = (onSaveDataset) => {
   const [referenceAnswer, setReferenceAnswer] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [evaluationHistory, setEvaluationHistory] = useState([]);
+  const [currentEvaluationId, setCurrentEvaluationId] = useState(null);
 
   const handleGenerateAnswers = async () => {
     if (!query.trim()) return;
@@ -16,6 +17,11 @@ export const useEvaluations = (onSaveDataset) => {
     try {
       const data = await fetchGeneratedAnswers(query, numAnswers);
       setCandidates(data);
+      
+      // Extract evaluationId from the first candidate (they all share the same one)
+      if (data.length > 0 && data[0].evaluationId) {
+        setCurrentEvaluationId(data[0].evaluationId);
+      }
       
       // Add to history
       setEvaluationHistory(prev => [{
@@ -26,23 +32,36 @@ export const useEvaluations = (onSaveDataset) => {
       }, ...prev].slice(0, 10));
     } catch (error) {
       console.error("Failed to generate answers", error);
+      alert('Failed to generate answers. Check console for details.');
     } finally {
       setIsGenerating(false);
     }
   };
 
   const handleSaveRanking = async () => {
+    if (!currentEvaluationId) {
+      alert('No evaluation ID found. Please generate answers first.');
+      return;
+    }
+
     try {
+      // Prepare rankings payload with the correct structure
+      const rankings = candidates.map(c => ({
+        candidate_id: c.id,
+        rank: c.rank,
+        comment: referenceAnswer.trim() ? `Reference: ${referenceAnswer}` : ''
+      }));
+
       await saveRanking({
-        query,
-        candidates: candidates.map(c => ({ id: c.id, rank: c.rank })),
-        reference_answer: referenceAnswer
+        evaluationId: currentEvaluationId,
+        rankings: rankings,
+        finalize: true
       });
       
       // Callback to update dataset state in parent/other hook
       if (referenceAnswer.trim() && onSaveDataset) {
         onSaveDataset({
-          id: Date.now(),
+          id: currentEvaluationId,
           query,
           referenceAnswer,
           topCandidate: candidates[0],
@@ -50,9 +69,13 @@ export const useEvaluations = (onSaveDataset) => {
         });
       }
       
-      alert('Ranking and reference answer saved!');
+      alert('Ranking and reference answer saved successfully!');
+      
+      // Reset state after successful save
+      setReferenceAnswer('');
     } catch (error) {
       console.error("Failed to save ranking", error);
+      alert('Failed to save ranking. Check console for details.');
     }
   };
 
@@ -62,9 +85,10 @@ export const useEvaluations = (onSaveDataset) => {
     
     if (newIndex < 0 || newIndex >= newCandidates.length) return;
     
+    // Swap candidates
     [newCandidates[index], newCandidates[newIndex]] = [newCandidates[newIndex], newCandidates[index]];
     
-    // Update ranks
+    // Update ranks to reflect new positions
     newCandidates.forEach((c, i) => c.rank = i + 1);
     setCandidates(newCandidates);
   };
@@ -76,6 +100,7 @@ export const useEvaluations = (onSaveDataset) => {
     referenceAnswer, setReferenceAnswer,
     isGenerating,
     evaluationHistory,
+    currentEvaluationId,
     handleGenerateAnswers,
     handleSaveRanking,
     moveCandidate
