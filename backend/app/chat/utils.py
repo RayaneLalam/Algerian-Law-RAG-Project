@@ -28,7 +28,7 @@ def make_reply_stream(received_message: str, vectors_json_str: str):
 
 
 
-def stream_assistant_reply(message, vectors_json_str, conversation_id):
+def stream_assistant_reply(message, vectors_json_str, conversation_id, model_version_id):
     """
     Generator that yields SSE chunks from make_reply_stream(...).
     On finish (or partial finish), saves the concatenated assistant message
@@ -53,10 +53,11 @@ def stream_assistant_reply(message, vectors_json_str, conversation_id):
         yield f"data: {err}\n\n"
     finally:
         # join and persist assistant full text (even if partial)
+        print("got here")
         assistant_full = "".join(assistant_chunks).strip()
         if assistant_full:
             try:
-                chat_models.insert_message(conversation_id, "assistant", assistant_full)
+                chat_models.insert_message(conversation_id, "assistant", content=assistant_full)
                 chat_models.update_conversation_timestamp(conversation_id)
             except Exception:
                 current_app.logger.exception("Failed to save assistant message")
