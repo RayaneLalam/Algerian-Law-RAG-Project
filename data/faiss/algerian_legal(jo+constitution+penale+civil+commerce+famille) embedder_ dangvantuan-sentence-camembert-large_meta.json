@@ -1,0 +1,19 @@
+{
+  "num_documents": 18722,
+  "embedding_model": "dangvantuan/sentence-camembert-large",
+  "llm_model": "bofenghuang/vigogne-2-7b-chat",
+  "dimension": 1024,
+  "document_types": [
+    "jo_2020",
+    "code_civil",
+    "jo_2023",
+    "jo_2021",
+    "jo_2022",
+    "jo_2024",
+    "jo_2025",
+    "code_penale",
+    "constitution",
+    "code_commerce",
+    "code_famille"
+  ]
+}
