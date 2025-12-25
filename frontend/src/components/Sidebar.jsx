@@ -1,47 +1,48 @@
 import React from "react";
 import { useLanguageTheme } from "../contexts/LanguageThemeContext";
-import { MdLanguage, MdLogout } from "react-icons/md";
+import { MdLanguage, MdLogout, MdDelete } from "react-icons/md";
 import { BsSun, BsMoon } from "react-icons/bs";
 import { IoMdHelpCircle } from "react-icons/io";
-import { HiOutlineMenuAlt2 } from "react-icons/hi"; // new menu icon
+import { HiOutlineMenuAlt2 } from "react-icons/hi";
 
 export const Sidebar = ({
   isOpen,
   onToggle,
   onNewChat,
   onSelectConversation,
+  onDeleteConversation,
   conversations,
+  conversationsLoading,
+  currentConversationId,
 }) => {
   const { language, theme, toggleLanguage, toggleTheme, t } =
     useLanguageTheme();
   const isArabic = language === "ar";
   const isDark = theme === "dark";
 
-  const bgColor = isDark ? "#232323" : "#f1f1f1";
   const textColor = isDark ? "#ffffff" : "#1c1c1c";
   const secondaryText = isDark ? "#adadad" : "#6b6b6b";
   const borderColor = isDark ? "#4a4b4a" : "#e5e5e5";
   const hoverBg = isDark ? "#3a3a3a" : "#f0f0f0";
-  const accentColor = "#D4AF37";
+  const activeBg = isDark ? "#4a4b4a" : "#e5e5e5";
 
   return (
     <div
-      className={`absolute inset-y-0 w-64 transition-transform duration-300 z-40 flex flex-col border-r ${
-        isOpen
-          ? "translate-x-0"
-          : isArabic
-            ? "translate-x-full"
-            : "-translate-x-full"
-      }`}
       style={{
+        position: "fixed",
+        top: 0,
+        bottom: 0,
+        [isArabic ? "right" : "left"]: 0,
+        width: "256px",
         backgroundColor: isDark ? "#232323" : "#f1f1f1",
-        borderColor: isDark ? "#4a4b4a" : "#e5e5e5",
+        borderRight: isArabic ? "none" : `1px solid ${borderColor}`,
+        borderLeft: isArabic ? `1px solid ${borderColor}` : "none",
         fontFamily: isArabic ? '"Cairo", sans-serif' : '"Inter", sans-serif',
-        [isArabic ? "borderLeft" : "borderRight"]: `1px solid ${
-          isDark ? "#4a4b4a" : "#e5e5e5"
-        }`,
-        right: isArabic ? 0 : "auto",
-        left: isArabic ? "auto" : 0,
+        display: "flex",
+        flexDirection: "column",
+        transform: isOpen ? "translateX(0)" : isArabic ? "translateX(100%)" : "translateX(-100%)",
+        transition: "transform 0.3s ease",
+        zIndex: 40,
       }}
     >
       {/* Header */}
@@ -63,7 +64,7 @@ export const Sidebar = ({
 
         {/* Sidebar Toggle */}
         <button
-          onClick={onToggle} // <-- important
+          onClick={onToggle}
           style={{
             width: "32px",
             height: "32px",
@@ -137,7 +138,19 @@ export const Sidebar = ({
         >
           {t.recent}
         </p>
-        {conversations.length === 0 ? (
+        
+        {conversationsLoading ? (
+          <p
+            style={{
+              fontSize: "16px",
+              color: secondaryText,
+              padding: "12px",
+              textAlign: "center",
+            }}
+          >
+            {isArabic ? "جاري التحميل..." : "Chargement..."}
+          </p>
+        ) : conversations.length === 0 ? (
           <p
             style={{
               fontSize: "16px",
@@ -149,34 +162,85 @@ export const Sidebar = ({
             {isArabic ? "لا توجد محادثات" : "Aucune conversation"}
           </p>
         ) : (
-          conversations.map((conv) => (
-            <div
-              key={conv.id}
-              onClick={() => {
-                onSelectConversation(conv.id);
-                onToggle();
-              }}
-              style={{
-                padding: "8px",
-                borderRadius: "8px",
-                cursor: "pointer",
-                fontSize: "18px",
-                color: textColor,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                transition: "background-color 0.2s",
-              }}
-              onMouseEnter={(e) =>
-                (e.currentTarget.style.backgroundColor = hoverBg)
-              }
-              onMouseLeave={(e) =>
-                (e.currentTarget.style.backgroundColor = "transparent")
-              }
-            >
-              {conv.title}
-            </div>
-          ))
+          conversations.map((conv) => {
+            const isActive = currentConversationId === parseInt(conv.id);
+            return (
+              <div
+                key={conv.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  padding: "8px",
+                  borderRadius: "8px",
+                  cursor: "pointer",
+                  fontSize: "18px",
+                  color: textColor,
+                  backgroundColor: isActive ? activeBg : "transparent",
+                  transition: "background-color 0.2s",
+                  marginBottom: "4px",
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.backgroundColor = hoverBg;
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                  }
+                }}
+              >
+                <div
+                  onClick={() => onSelectConversation(conv.id)}
+                  style={{
+                    flex: 1,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {conv.title}
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.confirm(
+                      isArabic 
+                        ? "هل تريد حذف هذه المحادثة؟" 
+                        : "Supprimer cette conversation?"
+                    )) {
+                      onDeleteConversation(conv.id);
+                    }
+                  }}
+                  style={{
+                    padding: "4px",
+                    borderRadius: "4px",
+                    border: "none",
+                    backgroundColor: "transparent",
+                    color: secondaryText,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "all 0.2s",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = isDark 
+                      ? "rgba(239, 68, 68, 0.2)" 
+                      : "rgba(239, 68, 68, 0.1)";
+                    e.currentTarget.style.color = "#ef4444";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                    e.currentTarget.style.color = secondaryText;
+                  }}
+                >
+                  <MdDelete size={16} />
+                </button>
+              </div>
+            );
+          })
         )}
       </div>
 

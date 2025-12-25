@@ -11,6 +11,126 @@ from . import chat_models
 search_service = SearchService()
 
 
+@chat_bp.route("/conversations", methods=["GET"])
+@jwt_required
+def get_conversations():
+    """
+    Get all conversations for the authenticated user.
+    Returns conversations sorted by most recent first.
+    """
+    user = getattr(g, "current_user", None)
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_id = user["id"]
+
+    try:
+        conversations = chat_models.get_all_conversations_for_user(user_id)
+
+        result = []
+        for conv in conversations:
+            result.append({
+                "id": str(conv["id"]),
+                "title": conv["title"],
+                "status": conv["status"],
+                "created_at": conv["created_at"],
+                "updated_at": conv["updated_at"],
+                "message_count": conv["message_count"]
+            })
+
+        return jsonify({"conversations": result}), 200
+
+    except Exception as e:
+        current_app.logger.exception("Error fetching conversations")
+        return jsonify({"error": f"Server error: {e}"}), 500
+
+
+@chat_bp.route("/conversations/<int:conversation_id>/messages", methods=["GET"])
+@jwt_required
+def get_conversation_messages(conversation_id):
+    """
+    Get all messages for a specific conversation.
+    Only returns messages if user owns the conversation.
+    """
+    user = getattr(g, "current_user", None)
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_id = user["id"]
+
+    try:
+        messages = chat_models.get_conversation_messages(conversation_id, user_id)
+        
+        if messages is None:
+            return jsonify({"error": "Conversation not found or access denied"}), 404
+
+        result = []
+        for msg in messages:
+            result.append({
+                "id": msg["id"],
+                "role": msg["role"],
+                "content": msg["content"],
+                "tokens": msg["tokens"],
+                "created_at": msg["created_at"]
+            })
+
+        return jsonify({"messages": result}), 200
+
+    except Exception as e:
+        current_app.logger.exception("Error fetching messages")
+        return jsonify({"error": f"Server error: {e}"}), 500
+
+
+@chat_bp.route("/conversations", methods=["POST"])
+@jwt_required
+def create_conversation():
+    """
+    Create a new conversation.
+    Expects JSON body with optional 'title'.
+    """
+    user = getattr(g, "current_user", None)
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_id = user["id"]
+
+    try:
+        data = request.get_json(silent=True) or {}
+        title = data.get("title", "New Conversation")
+
+        conversation_id = chat_models.create_conversation(user_id, title=title)
+
+        return jsonify({
+            "conversation_id": str(conversation_id),
+            "title": title,
+            "created_at": None  # Will be set by database
+        }), 201
+
+    except Exception as e:
+        current_app.logger.exception("Error creating conversation")
+        return jsonify({"error": f"Server error: {e}"}), 500
+
+
+@chat_bp.route("/conversations/<int:conversation_id>", methods=["DELETE"])
+@jwt_required
+def delete_conversation(conversation_id):
+    """
+    Soft delete a conversation (set status to 'deleted').
+    Only allows deletion if user owns the conversation.
+    """
+    user = getattr(g, "current_user", None)
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_id = user["id"]
+
+    try:
+        success = chat_models.delete_conversation(conversation_id, user_id)
+        
+        if not success:
+            return jsonify({"error": "Conversation not found or access denied"}), 404
+
+        return jsonify({"message": "Conversation deleted successfully"}), 200
+
+    except Exception as e:
+        current_app.logger.exception("Error deleting conversation")
+        return jsonify({"error": f"Server error: {e}"}), 500
 
 
 @chat_bp.route("/chat_stream", methods=["GET", "POST"])
@@ -46,31 +166,27 @@ def chat_stream():
     try:
         # Get default model version if none specified
         if not model_version_id:
-            # Query for default model version
-            default_model = current_app.db.execute(
-                "SELECT id FROM model_versions WHERE is_default = 1 LIMIT 1"
-            ).fetchone()
-            if default_model:
-                model_version_id = default_model["id"]
-            else:
-                # Fallback to any available model version
-                any_model = current_app.db.execute(
-                    "SELECT id FROM model_versions LIMIT 1"
-                ).fetchone()
-                if any_model:
-                    model_version_id = any_model["id"]
-                else:
-                    return jsonify({"error": "No model versions available"}), 500
+            model_version_id = chat_models.get_default_model_version()
+            if not model_version_id:
+                return jsonify({"error": "No model versions available"}), 500
 
         # validate or create conversation
         if conversation_id:
-            # conversation_id should be TEXT (UUID-like string) now, not int
+            # Convert to int if it's a string
+            try:
+                conversation_id = int(conversation_id)
+            except (ValueError, TypeError):
+                return jsonify({"error": "Invalid conversation_id format"}), 400
+            
             conv = chat_models.get_conversation_for_user(conversation_id, user_id)
             if not conv:
                 return jsonify({"error": "Conversation not found or access denied"}), 404
         else:
             title = (message[:60] + "...") if len(message) > 60 else message
             conversation_id = chat_models.create_conversation(user_id, title=title)
+
+        # Update conversation timestamp
+        chat_models.update_conversation_timestamp(conversation_id)
 
         # store user message with model_version_id
         chat_models.insert_message(
@@ -119,6 +235,3 @@ def chat_stream():
     except Exception as e:
         current_app.logger.exception("chat_stream error")
         return jsonify({"error": f"Server error: {e}"}), 500
-    
-
-

@@ -20,25 +20,70 @@ export const App = () => {
   const [isInputCentered, setIsInputCentered] = useState(true);
   const [conversations, setConversations] = useState([]);
   const [currentConversationId, setCurrentConversationId] = useState(null);
+  const [conversationsLoading, setConversationsLoading] = useState(false);
 
-  // Load conversations from localStorage
+  // Load conversations from backend
   useEffect(() => {
-    if (isAuthenticated) {
-      const saved = localStorage.getItem("conversations");
-      if (saved) setConversations(JSON.parse(saved));
+    if (isAuthenticated && token) {
+      fetchConversations();
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, token]);
 
-  // Save conversations to localStorage
-  useEffect(() => {
-    if (isAuthenticated) {
-      localStorage.setItem("conversations", JSON.stringify(conversations));
+  const fetchConversations = async () => {
+    setConversationsLoading(true);
+    try {
+      const response = await fetch("http://localhost:5000/conversations", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setConversations(data.conversations || []);
+      } else {
+        console.error("Failed to fetch conversations");
+      }
+    } catch (error) {
+      console.error("Error fetching conversations:", error);
+    } finally {
+      setConversationsLoading(false);
     }
-  }, [conversations, isAuthenticated]);
+  };
+
+  const fetchConversationMessages = async (conversationId) => {
+    try {
+      const response = await fetch(
+        `http://localhost:5000/conversations/${conversationId}/messages`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        // Convert backend message format to frontend format
+        const formattedMessages = data.messages.map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+        }));
+        return formattedMessages;
+      } else {
+        console.error("Failed to fetch messages");
+        return [];
+      }
+    } catch (error) {
+      console.error("Error fetching messages:", error);
+      return [];
+    }
+  };
 
   useLayoutEffect(() => {
     const handleResize = () => {
-      setIsShowSidebar(window.innerWidth <= 640);
+      // Auto-open sidebar on larger screens
+      setIsShowSidebar(window.innerWidth > 640);
     };
     handleResize();
     window.addEventListener("resize", handleResize);
@@ -49,7 +94,10 @@ export const App = () => {
     setMessages([]);
     setIsInputCentered(true);
     setCurrentConversationId(null);
-    setIsShowSidebar(false);
+    // Don't close sidebar on desktop
+    if (window.innerWidth <= 640) {
+      setIsShowSidebar(false);
+    }
   };
 
   const handleSendMessage = async (text) => {
@@ -65,28 +113,6 @@ export const App = () => {
       { role: "assistant", content: "" },
     ];
     setMessages(updatedMessages);
-
-    // Save or update conversation
-    let convId = currentConversationId;
-    if (!convId) {
-      convId = Date.now().toString();
-      setCurrentConversationId(convId);
-      setConversations((prev) => [
-        ...prev,
-        {
-          id: convId,
-          title: userMessage.substring(0, 50),
-          messages: updatedMessages,
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-    } else {
-      setConversations((prev) =>
-        prev.map((conv) =>
-          conv.id === convId ? { ...conv, messages: updatedMessages } : conv
-        )
-      );
-    }
 
     try {
       const testModelVersionId = "default-model-v1";
@@ -141,20 +167,37 @@ export const App = () => {
         }
       }
 
-      // Save final message to conversation
-      setConversations((prev) =>
-        prev.map((conv) =>
-          conv.id === convId
-            ? {
-                ...conv,
-                messages: [
-                  ...updatedMessages.slice(0, -1),
-                  { role: "assistant", content: displayedText.trim() },
-                ],
-              }
-            : conv
-        )
-      );
+      // Update final message
+      setMessages((prev) => {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          ...updated[updated.length - 1],
+          content: displayedText.trim(),
+        };
+        return updated;
+      });
+
+      // Refresh conversations list to get updated conversation
+      await fetchConversations();
+
+      // If this was a new conversation, get the conversation ID from the response header or refetch
+      if (!currentConversationId) {
+        // The backend creates a conversation, so we need to find it
+        // For now, we'll just refresh the list and the newest one will be at the top
+        const convResponse = await fetch("http://localhost:5000/conversations", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (convResponse.ok) {
+          const data = await convResponse.json();
+          if (data.conversations && data.conversations.length > 0) {
+            // Set the most recent conversation as current
+            setCurrentConversationId(parseInt(data.conversations[0].id));
+          }
+        }
+      }
+
     } catch (err) {
       console.error("Chat stream error:", err);
       alert("Error connecting to the assistant.");
@@ -163,13 +206,45 @@ export const App = () => {
     }
   };
 
-  const handleSelectConversation = (id) => {
-    const conversation = conversations.find((c) => c.id === id);
-    if (conversation) {
-      setMessages(conversation.messages);
-      setCurrentConversationId(id);
-      setIsInputCentered(false);
+  const handleSelectConversation = async (id) => {
+    const conversationId = parseInt(id);
+    setCurrentConversationId(conversationId);
+    setIsInputCentered(false);
+    
+    // Fetch messages for this conversation
+    const conversationMessages = await fetchConversationMessages(conversationId);
+    setMessages(conversationMessages);
+    
+    // Close sidebar on mobile after selection
+    if (window.innerWidth <= 640) {
       setIsShowSidebar(false);
+    }
+  };
+
+  const handleDeleteConversation = async (id) => {
+    try {
+      const response = await fetch(
+        `http://localhost:5000/conversations/${id}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (response.ok) {
+        // If we deleted the current conversation, start a new chat
+        if (currentConversationId === parseInt(id)) {
+          handleNewChat();
+        }
+        // Refresh conversations list
+        await fetchConversations();
+      } else {
+        console.error("Failed to delete conversation");
+      }
+    } catch (error) {
+      console.error("Error deleting conversation:", error);
     }
   };
 
@@ -206,9 +281,6 @@ export const App = () => {
         height: "100vh",
         backgroundColor: bgColor,
         direction: isArabic ? "rtl" : "ltr",
-        transition: "margin 0.3s ease",
-        marginLeft: isShowSidebar && !isArabic ? "256px" : "0",
-        marginRight: isShowSidebar && isArabic ? "256px" : "0",
       }}
     >
       <Sidebar
@@ -216,7 +288,10 @@ export const App = () => {
         onToggle={() => setIsShowSidebar((prev) => !prev)}
         onNewChat={handleNewChat}
         onSelectConversation={handleSelectConversation}
+        onDeleteConversation={handleDeleteConversation}
         conversations={conversations}
+        conversationsLoading={conversationsLoading}
+        currentConversationId={currentConversationId}
       />
 
       <div
@@ -225,6 +300,8 @@ export const App = () => {
           display: "flex",
           flexDirection: "column",
           position: "relative",
+          marginLeft: isShowSidebar && !isArabic ? "256px" : "0",
+          marginRight: isShowSidebar && isArabic ? "256px" : "0",
           transition: "margin 0.3s ease",
         }}
       >
@@ -246,12 +323,24 @@ export const App = () => {
           }}
         >
           {isShowSidebar ? (
-            <MdOutlineArrowRight
+            isArabic ? (
+              <MdOutlineArrowRight
+                size={24}
+                color={isDark ? "#ffffff" : "#000000"}
+              />
+            ) : (
+              <MdOutlineArrowLeft
+                size={24}
+                color={isDark ? "#ffffff" : "#000000"}
+              />
+            )
+          ) : isArabic ? (
+            <MdOutlineArrowLeft
               size={24}
               color={isDark ? "#ffffff" : "#000000"}
             />
           ) : (
-            <MdOutlineArrowLeft
+            <MdOutlineArrowRight
               size={24}
               color={isDark ? "#ffffff" : "#000000"}
             />
