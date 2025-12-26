@@ -3,15 +3,19 @@ from flask import Blueprint, request, jsonify, g
 from database.db_setup import get_db
 import json
 from datetime import datetime
+from app.auth.auth_middleware import admin_required
 
 evaluation_bp = Blueprint('evaluation', __name__, url_prefix='/api/evaluation')
 
 def get_current_user_id():
-    """Helper to get current user ID - implement based on your auth system"""
-    # For now, return test user
-    return 2
+    """Helper to get current user ID from Flask's g object (set by auth middleware)"""
+    if hasattr(g, 'current_user') and g.current_user:
+        return g.current_user['id']
+    # Fallback for development/testing
+    return None
 
 @evaluation_bp.route('/create', methods=['POST'])
+@admin_required
 def create_evaluation():
     """Create a new evaluation with candidate responses"""
     data = request.get_json()
@@ -26,6 +30,9 @@ def create_evaluation():
     
     db = get_db()
     evaluator_id = get_current_user_id()
+    
+    if not evaluator_id:
+        return jsonify({'error': 'User not authenticated'}), 401
     
     try:
         # Create evaluation record
@@ -79,6 +86,7 @@ def create_evaluation():
 
 
 @evaluation_bp.route('/rank', methods=['POST'])
+@admin_required
 def rank_candidate():
     """Rank an evaluation candidate"""
     data = request.get_json()
@@ -108,6 +116,7 @@ def rank_candidate():
 
 
 @evaluation_bp.route('/complete', methods=['POST'])
+@admin_required
 def complete_evaluation():
     """Mark an evaluation as completed"""
     data = request.get_json()
@@ -135,10 +144,14 @@ def complete_evaluation():
 
 
 @evaluation_bp.route('/history', methods=['GET'])
+@admin_required
 def get_evaluation_history():
     """Get evaluation history for current user"""
     db = get_db()
     evaluator_id = get_current_user_id()
+    
+    if not evaluator_id:
+        return jsonify({'error': 'User not authenticated'}), 401
     
     try:
         evaluations = db.execute(
@@ -161,6 +174,7 @@ def get_evaluation_history():
 
 
 @evaluation_bp.route('/anonymous-queries', methods=['GET'])
+@admin_required
 def get_anonymous_queries():
     """Get anonymous user queries for hallucination review"""
     db = get_db()
@@ -204,6 +218,7 @@ def get_anonymous_queries():
 
 
 @evaluation_bp.route('/mark-hallucination', methods=['POST'])
+@admin_required
 def mark_hallucination():
     """Mark a message response as hallucination or accurate"""
     data = request.get_json()
@@ -215,6 +230,10 @@ def mark_hallucination():
         return jsonify({'error': 'Message ID is required'}), 400
     
     db = get_db()
+    reviewer_id = get_current_user_id()
+    
+    if not reviewer_id:
+        return jsonify({'error': 'User not authenticated'}), 401
     
     try:
         # Update message metadata with hallucination flag
@@ -230,7 +249,7 @@ def mark_hallucination():
         metadata['hallucination_review'] = {
             'is_hallucination': is_hallucination,
             'notes': notes,
-            'reviewed_by': get_current_user_id(),
+            'reviewed_by': reviewer_id,
             'reviewed_at': datetime.now().isoformat()
         }
         
@@ -248,6 +267,7 @@ def mark_hallucination():
 
 
 @evaluation_bp.route('/metrics', methods=['GET'])
+@admin_required
 def get_metrics():
     """Get performance metrics for a model version on a dataset"""
     model_version_id = request.args.get('model_version_id', type=int)
@@ -290,6 +310,7 @@ def get_metrics():
 
 
 @evaluation_bp.route('/models', methods=['GET'])
+@admin_required
 def get_models():
     """Get list of available model versions"""
     db = get_db()
@@ -317,6 +338,7 @@ def get_models():
 
 
 @evaluation_bp.route('/datasets', methods=['GET'])
+@admin_required
 def get_datasets():
     """Get list of available datasets"""
     db = get_db()
@@ -343,18 +365,23 @@ def get_datasets():
 
 
 @evaluation_bp.route('/evaluation/<int:eval_id>', methods=['GET'])
+@admin_required
 def get_evaluation_detail(eval_id):
     """Get detailed information about a specific evaluation"""
     db = get_db()
+    evaluator_id = get_current_user_id()
+    
+    if not evaluator_id:
+        return jsonify({'error': 'User not authenticated'}), 401
     
     try:
         evaluation = db.execute(
-            'SELECT * FROM evaluations WHERE id = ?',
-            (eval_id,)
+            'SELECT * FROM evaluations WHERE id = ? AND evaluator_id = ?',
+            (eval_id, evaluator_id)
         ).fetchone()
         
         if not evaluation:
-            return jsonify({'error': 'Evaluation not found'}), 404
+            return jsonify({'error': 'Evaluation not found or access denied'}), 404
         
         candidates = db.execute(
             '''SELECT * FROM evaluation_candidate 
@@ -373,11 +400,25 @@ def get_evaluation_detail(eval_id):
 
 
 @evaluation_bp.route('/discard/<int:eval_id>', methods=['POST'])
+@admin_required
 def discard_evaluation(eval_id):
     """Discard an evaluation"""
     db = get_db()
+    evaluator_id = get_current_user_id()
+    
+    if not evaluator_id:
+        return jsonify({'error': 'User not authenticated'}), 401
     
     try:
+        # Check if evaluation belongs to current user
+        evaluation = db.execute(
+            'SELECT id FROM evaluations WHERE id = ? AND evaluator_id = ?',
+            (eval_id, evaluator_id)
+        ).fetchone()
+        
+        if not evaluation:
+            return jsonify({'error': 'Evaluation not found or access denied'}), 404
+        
         db.execute(
             'UPDATE evaluations SET status = ? WHERE id = ?',
             ('discarded', eval_id)
@@ -394,6 +435,7 @@ def discard_evaluation(eval_id):
 # Additional helper routes for RLHF workflow
 
 @evaluation_bp.route('/batch-evaluate', methods=['POST'])
+@admin_required
 def batch_evaluate():
     """Create multiple evaluations from a dataset"""
     data = request.get_json()
@@ -407,6 +449,9 @@ def batch_evaluate():
     
     db = get_db()
     evaluator_id = get_current_user_id()
+    
+    if not evaluator_id:
+        return jsonify({'error': 'User not authenticated'}), 401
     
     try:
         # Get examples from dataset
@@ -457,6 +502,7 @@ def batch_evaluate():
 
 
 @evaluation_bp.route('/compute-metrics', methods=['POST'])
+@admin_required
 def compute_metrics():
     """Compute metrics for a model version on a dataset"""
     data = request.get_json()

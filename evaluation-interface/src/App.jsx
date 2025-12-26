@@ -1,13 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import AuthScreen from './components/AuthScreen';
+import AuthService from './services/AuthService';
 
 const API_BASE = 'http://localhost:5000/api/evaluation';
 
-const App = () => {
+const MainApp = () => {
+  const { logout, user } = useAuth();
   const [activeTab, setActiveTab] = useState('playground');
   const [query, setQuery] = useState('');
   const [numCandidates, setNumCandidates] = useState(3);
-  const [goldenLabel, setGoldenLabel] = useState(''); // New state for Golden Label
+  const [goldenLabel, setGoldenLabel] = useState('');
   const [loading, setLoading] = useState(false);
   const [currentEvaluation, setCurrentEvaluation] = useState(null);
   const [candidates, setCandidates] = useState([]);
@@ -18,6 +22,19 @@ const App = () => {
   const [selectedDataset, setSelectedDataset] = useState(null);
   const [models, setModels] = useState([]);
   const [datasets, setDatasets] = useState([]);
+
+  // Helper function to make authenticated API calls
+  const authFetch = async (url, options = {}) => {
+    const authHeaders = AuthService.getAuthHeader();
+    const mergedOptions = {
+      ...options,
+      headers: {
+        ...options.headers,
+        ...authHeaders,
+      },
+    };
+    return fetch(url, mergedOptions);
+  };
 
   useEffect(() => {
     fetchEvaluationHistory();
@@ -34,7 +51,7 @@ const App = () => {
 
   const fetchEvaluationHistory = async () => {
     try {
-      const res = await fetch(`${API_BASE}/history`);
+      const res = await authFetch(`${API_BASE}/history`);
       const data = await res.json();
       setEvaluationHistory(data.evaluations || []);
     } catch (err) {
@@ -44,7 +61,7 @@ const App = () => {
 
   const fetchAnonymousQueries = async () => {
     try {
-      const res = await fetch(`${API_BASE}/anonymous-queries`);
+      const res = await authFetch(`${API_BASE}/anonymous-queries`);
       const data = await res.json();
       setAnonymousQueries(data.queries || []);
     } catch (err) {
@@ -54,7 +71,7 @@ const App = () => {
 
   const fetchModels = async () => {
     try {
-      const res = await fetch(`${API_BASE}/models`);
+      const res = await authFetch(`${API_BASE}/models`);
       const data = await res.json();
       setModels(data.models || []);
       if (data.models?.length > 0) setSelectedModel(data.models[0].id);
@@ -65,7 +82,7 @@ const App = () => {
 
   const fetchDatasets = async () => {
     try {
-      const res = await fetch(`${API_BASE}/datasets`);
+      const res = await authFetch(`${API_BASE}/datasets`);
       const data = await res.json();
       setDatasets(data.datasets || []);
       if (data.datasets?.length > 0) setSelectedDataset(data.datasets[0].id);
@@ -76,7 +93,7 @@ const App = () => {
 
   const fetchMetrics = async () => {
     try {
-      const res = await fetch(`${API_BASE}/metrics?model_version_id=${selectedModel}&dataset_id=${selectedDataset}`);
+      const res = await authFetch(`${API_BASE}/metrics?model_version_id=${selectedModel}&dataset_id=${selectedDataset}`);
       const data = await res.json();
       setMetrics(data.metrics || []);
     } catch (err) {
@@ -89,14 +106,14 @@ const App = () => {
 
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/create`, {
+      const res = await authFetch(`${API_BASE}/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: query,
           num_responses: numCandidates,
           model_version_id: selectedModel,
-          golden_label: goldenLabel.trim() || null // Added golden_label to API call
+          golden_label: goldenLabel.trim() || null
         })
       });
       const data = await res.json();
@@ -112,7 +129,7 @@ const App = () => {
 
   const rankCandidate = async (candidateId, rank) => {
     try {
-      await fetch(`${API_BASE}/rank`, {
+      await authFetch(`${API_BASE}/rank`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -128,7 +145,7 @@ const App = () => {
 
   const markHallucination = async (queryId, isHallucination, notes) => {
     try {
-      await fetch(`${API_BASE}/mark-hallucination`, {
+      await authFetch(`${API_BASE}/mark-hallucination`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -147,7 +164,7 @@ const App = () => {
     if (!currentEvaluation) return;
 
     try {
-      await fetch(`${API_BASE}/complete`, {
+      await authFetch(`${API_BASE}/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -157,11 +174,15 @@ const App = () => {
       setCurrentEvaluation(null);
       setCandidates([]);
       setQuery('');
-      setGoldenLabel(''); // Clear golden label on completion
+      setGoldenLabel('');
       fetchEvaluationHistory();
     } catch (err) {
       console.error('Error completing evaluation:', err);
     }
+  };
+
+  const handleLogout = () => {
+    logout();
   };
 
   return (
@@ -170,6 +191,9 @@ const App = () => {
       <div className="w-64 bg-slate-900 text-white">
         <div className="p-6">
           <h1 className="text-2xl font-bold">Evaluator UI</h1>
+          <div className="mt-2 text-sm text-gray-400">
+            {user?.username}
+          </div>
         </div>
         <nav className="mt-6">
           <NavItem icon="📊" label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
@@ -179,6 +203,14 @@ const App = () => {
           <NavItem icon="🎨" label="Dataset Builder" active={activeTab === 'dataset'} onClick={() => setActiveTab('dataset')} />
           <NavItem icon="🔒" label="Governance" active={activeTab === 'governance'} onClick={() => setActiveTab('governance')} />
         </nav>
+        <div className="absolute bottom-0 w-64 p-6">
+          <button
+            onClick={handleLogout}
+            className="w-full bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Logout
+          </button>
+        </div>
       </div>
 
       {/* Main Content */}
@@ -528,5 +560,32 @@ const StatCard = ({ title, value }) => (
     <div className="text-3xl font-bold text-blue-600">{value}</div>
   </div>
 );
+
+// Main App component with authentication wrapper
+const App = () => {
+  return (
+    <AuthProvider>
+      <AuthWrapper />
+    </AuthProvider>
+  );
+};
+
+// Component to handle showing login or main app
+const AuthWrapper = () => {
+  const { isAuthenticated, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-50">
+        <div className="text-center">
+          <div className="text-2xl font-bold text-gray-800 mb-4">Loading...</div>
+          <div className="text-gray-600">Please wait</div>
+        </div>
+      </div>
+    );
+  }
+
+  return isAuthenticated ? <MainApp /> : <AuthScreen />;
+};
 
 export default App;
