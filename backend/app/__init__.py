@@ -24,7 +24,7 @@ def create_app():
 
     app.register_blueprint(chat_bp)
     app.register_blueprint(auth_bp)
-    app.register_blueprint(evaluation_bp, url_prefix='/evaluation')
+    app.register_blueprint(evaluation_bp)
 
     # Teardown
     app.teardown_appcontext(db_setup.close_connection)
