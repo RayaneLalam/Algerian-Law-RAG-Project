@@ -6,7 +6,7 @@ from .utils import create_access_token, decode_token
 from .auth_middleware import jwt_required, admin_required
 import json
 
-@bp.route("/register", methods=["POST"])
+@bp.route("/register", methods=["POST", "OPTIONS"])
 def register():
     """
     JSON body: {"username": "...", "email": "...", "password": "...", "role": "user" (optional)}
@@ -15,6 +15,9 @@ def register():
       - The requester is already an admin (provides admin token).
     Note: username maps to users.display_name in DB for compatibility.
     """
+    if request.method == "OPTIONS":
+        return "", 204
+
     data = request.get_json() or {}
     username = data.get("username")
     email = data.get("email")

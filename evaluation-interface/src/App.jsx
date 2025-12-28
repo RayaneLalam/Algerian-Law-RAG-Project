@@ -22,6 +22,8 @@ const MainApp = () => {
   const [selectedDataset, setSelectedDataset] = useState(null);
   const [models, setModels] = useState([]);
   const [datasets, setDatasets] = useState([]);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(true);
+
 
   // Helper function to make authenticated API calls
   const authFetch = async (url, options = {}) => {
@@ -143,13 +145,18 @@ const MainApp = () => {
     }
   };
 
-  const markHallucination = async (queryId, isHallucination, notes) => {
+  const markHallucination = async (responseId, isHallucination, notes) => {
+    if (!responseId) {
+      alert('No response available to mark');
+      return;
+    }
+
     try {
       await authFetch(`${API_BASE}/mark-hallucination`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message_id: queryId,
+          message_id: responseId,
           is_hallucination: isHallucination,
           notes: notes
         })
@@ -414,29 +421,44 @@ const MainApp = () => {
         </div>
 
         {/* Right Sidebar - Evaluation History */}
-        <div className="w-80 bg-white border-l border-gray-200 p-6 overflow-auto">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-lg font-bold">Evaluation History</h3>
-            <span className="text-gray-400">→</span>
+        <div className={`relative transition-all duration-300 ${isHistoryOpen ? 'w-80' : 'w-12'}`}>
+          {/* Toggle button */}
+          <div className="absolute -left-5 top-6">
+            <button
+              onClick={() => setIsHistoryOpen(open => !open)}
+              className="w-10 h-10 bg-white border rounded-full shadow flex items-center justify-center"
+              aria-label={isHistoryOpen ? 'Close history' : 'Open history'}
+              title={isHistoryOpen ? 'Close history' : 'Open history'}
+            >
+              <span className={`${isHistoryOpen ? 'transform rotate-180' : ''} transition-transform`}>❯</span>
+            </button>
           </div>
 
-          {evaluationHistory.length === 0 ? (
-            <p className="text-gray-500 text-sm">No evaluations yet</p>
-          ) : (
-            <div className="space-y-3">
-              {evaluationHistory.map((evaluation) => (
-                <div key={evaluation.id} className="border border-gray-200 rounded-lg p-3 text-sm">
-                  <div className="font-medium mb-1 truncate">{evaluation.prompt}</div>
-                  <div className="text-gray-500 text-xs">
-                    {evaluation.status} • {evaluation.num_responses} candidates
-                  </div>
-                  <div className="text-gray-400 text-xs mt-1">
-                    {new Date(evaluation.created_at).toLocaleDateString()}
-                  </div>
-                </div>
-              ))}
+          {/* Sidebar panel */}
+          <div className={`h-full bg-white border-l border-gray-200 p-6 overflow-auto transition-opacity duration-200 ${isHistoryOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-bold">Evaluation History</h3>
+              <span className="text-gray-400">→</span>
             </div>
-          )}
+
+            {evaluationHistory.length === 0 ? (
+              <p className="text-gray-500 text-sm">No evaluations yet</p>
+            ) : (
+              <div className="space-y-3">
+                {evaluationHistory.map((evaluation) => (
+                  <div key={evaluation.id} className="border border-gray-200 rounded-lg p-3 text-sm">
+                    <div className="font-medium mb-1 truncate">{evaluation.prompt}</div>
+                    <div className="text-gray-500 text-xs">
+                      {evaluation.status} • {evaluation.num_responses} candidates
+                    </div>
+                    <div className="text-gray-400 text-xs mt-1">
+                      {new Date(evaluation.created_at).toLocaleDateString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -506,18 +528,38 @@ const QueryReviewCard = ({ query, onMarkHallucination }) => {
   const [notes, setNotes] = useState('');
   const [showDetails, setShowDetails] = useState(false);
 
+  // Check if there's already a review
+  const hasReview = query.response_metadata?.hallucination_review;
+  const reviewStatus = hasReview ? (
+    hasReview.is_hallucination ? 'Marked as Hallucination' : 'Marked as Accurate'
+  ) : null;
+
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <div className="flex justify-between items-start mb-3">
         <div className="flex-1">
-          <div className="font-medium mb-2">Query from Anonymous User</div>
+          <div className="flex items-center gap-2 mb-2">
+            <div className="font-medium">User Query</div>
+            {reviewStatus && (
+              <span className={`text-xs px-2 py-1 rounded ${
+                hasReview.is_hallucination ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
+              }`}>
+                {reviewStatus}
+              </span>
+            )}
+          </div>
           <p className="text-gray-600 text-sm mb-2">{query.content}</p>
-          <button
-            className="text-blue-600 text-sm hover:underline"
-            onClick={() => setShowDetails(!showDetails)}
-          >
-            {showDetails ? 'Hide' : 'Show'} Response
-          </button>
+          {query.response && (
+            <button
+              className="text-blue-600 text-sm hover:underline"
+              onClick={() => setShowDetails(!showDetails)}
+            >
+              {showDetails ? 'Hide' : 'Show'} Response
+            </button>
+          )}
+          {!query.response && (
+            <p className="text-gray-400 text-xs italic">No response available</p>
+          )}
         </div>
       </div>
 
@@ -525,6 +567,16 @@ const QueryReviewCard = ({ query, onMarkHallucination }) => {
         <div className="mb-4 p-3 bg-gray-50 rounded text-sm">
           <div className="font-medium mb-1">Model Response:</div>
           <p className="text-gray-700">{query.response}</p>
+        </div>
+      )}
+
+      {hasReview && (
+        <div className="mb-4 p-3 bg-blue-50 rounded text-sm">
+          <div className="font-medium mb-1">Review Notes:</div>
+          <p className="text-gray-700">{hasReview.notes || 'No notes provided'}</p>
+          <p className="text-gray-400 text-xs mt-1">
+            Reviewed on {new Date(hasReview.reviewed_at).toLocaleString()}
+          </p>
         </div>
       )}
 
@@ -538,18 +590,23 @@ const QueryReviewCard = ({ query, onMarkHallucination }) => {
 
       <div className="flex gap-2">
         <button
-          className="bg-red-600 text-white px-4 py-2 rounded text-sm hover:bg-red-700"
-          onClick={() => onMarkHallucination(query.id, true, notes)}
+          className="bg-red-600 text-white px-4 py-2 rounded text-sm hover:bg-red-700 disabled:bg-gray-400"
+          onClick={() => onMarkHallucination(query.response_id, true, notes)}
+          disabled={!query.response_id}
         >
           Mark as Hallucination
         </button>
         <button
-          className="bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700"
-          onClick={() => onMarkHallucination(query.id, false, notes)}
+          className="bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700 disabled:bg-gray-400"
+          onClick={() => onMarkHallucination(query.response_id, false, notes)}
+          disabled={!query.response_id}
         >
           Mark as Accurate
         </button>
       </div>
+      {!query.response_id && (
+        <p className="text-gray-400 text-xs mt-2">Cannot mark without a response</p>
+      )}
     </div>
   );
 };

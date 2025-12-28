@@ -19,7 +19,7 @@ def create_app():
     from .auth import bp as auth_bp
     from flask_cors import CORS
 
-    CORS(app, origins=["http://localhost:3000", "http://localhost:5173"], supports_credentials=True, expose_headers=["Content-Type"])
+    CORS(app, origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"], supports_credentials=True, expose_headers=["Content-Type"])
 
 
     app.register_blueprint(chat_bp)

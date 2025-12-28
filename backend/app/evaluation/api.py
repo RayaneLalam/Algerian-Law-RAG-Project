@@ -1,9 +1,14 @@
 # app/evaluation/routes.py
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify, g, current_app
 from database.db_setup import get_db
 import json
 from datetime import datetime
 from app.auth.auth_middleware import admin_required
+from app.services.search_service.search_service import SearchService
+from app.chat.utils import make_reply_stream
+
+# Instantiate services globally
+search_service = SearchService()
 
 evaluation_bp = Blueprint('evaluation', __name__, url_prefix='/api/evaluation')
 
@@ -44,22 +49,65 @@ def create_evaluation():
         )
         evaluation_id = cursor.lastrowid
         
-        # Generate candidate responses (mock for now - integrate with your RAG system)
+        # Search for relevant articles (same as chat_stream)
+        top_k = 5
+        results = search_service.search(prompt, top_n=top_k)
+        
+        # Debug logging
+        current_app.logger.info(f"Evaluation Query: {prompt}")
+        current_app.logger.info(f"Found {len(results)} results")
+        current_app.logger.info(f"Using model version: {model_version_id}")
+        
+        for i, result in enumerate(results, 1):
+            doc = result.get("document", {})
+            current_app.logger.info(
+                f"Result {i}: Article {doc.get('article', '?')} "
+                f"(similarity: {result.get('similarity', 0):.3f}) - "
+                f"Content preview: {doc.get('content', '')[:100]}"
+            )
+        
+        vectors_json_str = json.dumps(results, ensure_ascii=False)
+        
+        # Generate candidate responses using real RAG
         candidates = []
         for i in range(num_responses):
-            response_text = f"Mock response {i+1} for: {prompt}"
-            cursor = db.execute(
-                '''INSERT INTO evaluation_candidate 
-                (evaluation_id, model_version_id, response_text, tokens)
-                VALUES (?, ?, ?, ?)''',
-                (evaluation_id, model_version_id, response_text, len(response_text.split()))
-            )
-            candidate_id = cursor.lastrowid
-            candidates.append({
-                'id': candidate_id,
-                'response_text': response_text,
-                'tokens': len(response_text.split())
-            })
+            # Generate real response using make_reply_stream
+            response_chunks = []
+            try:
+                for chunk in make_reply_stream(prompt, vectors_json_str):
+                    response_chunks.append(chunk)
+                
+                response_text = "".join(response_chunks).strip()
+                
+                # Insert candidate response
+                cursor = db.execute(
+                    '''INSERT INTO evaluation_candidate 
+                    (evaluation_id, model_version_id, response_text, tokens)
+                    VALUES (?, ?, ?, ?)''',
+                    (evaluation_id, model_version_id, response_text, len(response_text.split()))
+                )
+                candidate_id = cursor.lastrowid
+                candidates.append({
+                    'id': candidate_id,
+                    'response_text': response_text,
+                    'tokens': len(response_text.split())
+                })
+            except Exception as e:
+                current_app.logger.exception(f"Error generating candidate {i+1}")
+                # Still insert an error marker so the evaluation isn't incomplete
+                error_text = f"[Error generating response: {str(e)}]"
+                cursor = db.execute(
+                    '''INSERT INTO evaluation_candidate 
+                    (evaluation_id, model_version_id, response_text, tokens)
+                    VALUES (?, ?, ?, ?)''',
+                    (evaluation_id, model_version_id, error_text, 0)
+                )
+                candidate_id = cursor.lastrowid
+                candidates.append({
+                    'id': candidate_id,
+                    'response_text': error_text,
+                    'tokens': 0
+                })
         
         # Update evaluation status
         db.execute(
@@ -82,7 +130,9 @@ def create_evaluation():
         
     except Exception as e:
         db.rollback()
+        current_app.logger.exception("create_evaluation error")
         return jsonify({'error': str(e)}), 500
+
 
 
 @evaluation_bp.route('/rank', methods=['POST'])
@@ -180,33 +230,66 @@ def get_anonymous_queries():
     db = get_db()
     
     try:
-        # Get messages from conversations without evaluations
-        # or where sender_user_id is null (anonymous)
+        # Get user messages and their immediate assistant responses
         queries = db.execute(
             '''SELECT 
-                m.id,
-                m.content,
+                m.id as query_id,
+                m.content as query_content,
                 m.created_at,
                 m.conversation_id,
-                m.metadata,
-                response.content as response
+                m.metadata as query_metadata,
+                (SELECT content 
+                 FROM messages 
+                 WHERE conversation_id = m.conversation_id 
+                   AND id > m.id 
+                   AND role = 'assistant'
+                 ORDER BY id ASC 
+                 LIMIT 1) as response_content,
+                (SELECT id 
+                 FROM messages 
+                 WHERE conversation_id = m.conversation_id 
+                   AND id > m.id 
+                   AND role = 'assistant'
+                 ORDER BY id ASC 
+                 LIMIT 1) as response_id,
+                (SELECT metadata 
+                 FROM messages 
+                 WHERE conversation_id = m.conversation_id 
+                   AND id > m.id 
+                   AND role = 'assistant'
+                 ORDER BY id ASC 
+                 LIMIT 1) as response_metadata
             FROM messages m
-            LEFT JOIN messages response ON response.conversation_id = m.conversation_id 
-                AND response.id > m.id 
-                AND response.role = 'assistant'
+            WHERE m.role = 'user'
             ORDER BY m.created_at DESC
             LIMIT 50''',
         ).fetchall()
         
         result = []
         for row in queries:
-            query_dict = dict(row)
-            # Parse metadata if it exists
-            if query_dict.get('metadata'):
+            query_dict = {
+                'id': row['query_id'],
+                'content': row['query_content'],
+                'created_at': row['created_at'],
+                'conversation_id': row['conversation_id'],
+                'response': row['response_content'],
+                'response_id': row['response_id']
+            }
+            
+            # Parse query metadata if it exists
+            if row['query_metadata']:
                 try:
-                    query_dict['metadata'] = json.loads(query_dict['metadata'])
+                    query_dict['query_metadata'] = json.loads(row['query_metadata'])
                 except:
-                    pass
+                    query_dict['query_metadata'] = {}
+            
+            # Parse response metadata if it exists
+            if row['response_metadata']:
+                try:
+                    query_dict['response_metadata'] = json.loads(row['response_metadata'])
+                except:
+                    query_dict['response_metadata'] = {}
+            
             result.append(query_dict)
         
         return jsonify({
@@ -222,7 +305,7 @@ def get_anonymous_queries():
 def mark_hallucination():
     """Mark a message response as hallucination or accurate"""
     data = request.get_json()
-    message_id = data.get('message_id')
+    message_id = data.get('message_id')  # This should now be the response_id
     is_hallucination = data.get('is_hallucination', False)
     notes = data.get('notes', '')
     
@@ -264,7 +347,6 @@ def mark_hallucination():
     except Exception as e:
         db.rollback()
         return jsonify({'error': str(e)}), 500
-
 
 @evaluation_bp.route('/metrics', methods=['GET'])
 @admin_required

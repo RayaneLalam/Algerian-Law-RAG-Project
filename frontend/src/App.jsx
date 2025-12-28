@@ -279,8 +279,10 @@ export const App = () => {
       style={{
         display: "flex",
         height: "100vh",
+        width: "100vw", // Ensure it fills width
         backgroundColor: bgColor,
         direction: isArabic ? "rtl" : "ltr",
+        overflow: "hidden", // FIX: Prevents the outer scrollbar
       }}
     >
       <Sidebar
@@ -300,9 +302,11 @@ export const App = () => {
           display: "flex",
           flexDirection: "column",
           position: "relative",
+          height: "100vh", // FIX: Keep the content area strictly at viewport height
           marginLeft: isShowSidebar && !isArabic ? "256px" : "0",
           marginRight: isShowSidebar && isArabic ? "256px" : "0",
           transition: "margin 0.3s ease",
+          overflow: "hidden", // FIX: Prevents this container from expanding
         }}
       >
         <button
@@ -347,11 +351,15 @@ export const App = () => {
           )}
         </button>
 
-        {messages.length === 0 ? (
-          <WelcomeScreen />
-        ) : (
-          <ChatMessages messages={messages} isLoading={isLoading} />
-        )}
+        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          {messages.length === 0 ? (
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              <WelcomeScreen />
+            </div>
+          ) : (
+            <ChatMessages messages={messages} isLoading={isLoading} />
+          )}
+        </div>
 
         <InputArea
           onSend={handleSendMessage}
