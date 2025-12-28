@@ -1,5 +1,6 @@
 import os
 
+
 def _load_prompt_template(path):
     """Load prompt template from file."""
     try:
@@ -7,46 +8,45 @@ def _load_prompt_template(path):
             return f.read()
     except Exception as e:
         print(f"Error loading template: {e}")
-        return "Question: {query}\n\nContext:\n{context}\n\nAnswer:"
+        return """Tu es un assistant juridique expert en droit algérien. Réponds de manière précise, professionnelle et factuelle en te basant strictement sur le contexte fourni. Si l'information n'est pas dans le contexte, indique-le clairement.
+
+Contexte juridique:
+{context}
+
+Question: {query}
+
+Réponse:"""
 
 
 def _format_context_from_results(results):
     """
     Format search results into a readable context block for the LLM.
-    Each result should contain: document with article content, reference, etc.
+    Each result contains a legal document with source type, header, and content.
     """
     if not results:
-        return "Aucun contexte disponible."
-    
+        return "Aucun contexte juridique disponible."
+
     context_parts = []
-    
+
     for i, result in enumerate(results, start=1):
         # Extract the document from the result
         doc = result.get("document", {})
-        
-        # Get article metadata
-        title = doc.get("title", "?")
-        chapter = doc.get("chapter", "?")
-        article = doc.get("article", "?")
-        title_name = doc.get("title_name", "")
-        chapter_name = doc.get("chapter_name", "")
+
+        # Get document metadata
+        doc_type = doc.get("source_document_type", "DOCUMENT").upper()
+        header = doc.get("header", "Sans titre")
         content = doc.get("content", "")
-        
+
         # Get similarity score
         similarity = result.get("similarity", 0.0)
-        
-        # Format this article nicely
-        article_text = f"[Article {i}]\n"
-        article_text += f"Référence: Titre {title}"
-        if title_name:
-            article_text += f" ({title_name})"
-        article_text += f", Chapitre {chapter}"
-        if chapter_name:
-            article_text += f" ({chapter_name})"
-        article_text += f", Article {article}\n"
-        article_text += f"Pertinence: {similarity:.3f}\n"
-        article_text += f"Contenu:\n{content}\n"
-        
-        context_parts.append(article_text)
-    
+
+        # Format this document nicely
+        doc_text = f"--- Document {i} ---\n"
+        doc_text += f"Type: {doc_type}\n"
+        doc_text += f"Référence: {header}\n"
+        doc_text += f"Pertinence: {similarity:.3f}\n"
+        doc_text += f"Contenu:\n{content}\n"
+
+        context_parts.append(doc_text)
+
     return "\n".join(context_parts)

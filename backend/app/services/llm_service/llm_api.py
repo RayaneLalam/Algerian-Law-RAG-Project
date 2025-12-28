@@ -6,7 +6,7 @@ import json
 class LLM_Service:
     def __init__(self):
         self.base_url = "http://localhost:11434/api"
-        self.model = "deepseek-r1:8b"
+        self.model = "vigogne-7b"
 
     def get_completion(self, message: str) -> str:
         """

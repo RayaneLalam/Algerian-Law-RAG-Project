@@ -118,7 +118,7 @@ export const InputArea = ({ onSend, isLoading, isCentered }) => {
                 size={18}
                 style={{
                   color: accentColor,
-                  transform: "scaleX(-1)", // flips it horizontally
+                  transform: "scaleX(-1)",
                 }}
               />
             ) : (

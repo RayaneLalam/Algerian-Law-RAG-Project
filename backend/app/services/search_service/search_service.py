@@ -6,7 +6,7 @@ import faiss
 from sentence_transformers import SentenceTransformer
 
 # Configuration - Update these paths to match your files
-DATA_DIR = "data"
+DATA_DIR = "C:/Konan.ai/Website/Algerian-Law-RAG-Project/data"
 INDEX_BASE_NAME = "algerian_legal(jo+constitution+penale+civil+commerce+famille) embedder_ dangvantuan-sentence-camembert-large"
 FAISS_INDEX_PATH = os.path.join(DATA_DIR, f"{INDEX_BASE_NAME}.faiss")
 DOCS_JSON_PATH = os.path.join(DATA_DIR, f"{INDEX_BASE_NAME}_docs.json")

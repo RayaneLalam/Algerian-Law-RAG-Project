@@ -57,8 +57,9 @@ def get_conversation_messages(conversation_id):
     user_id = user["id"]
 
     try:
-        messages = chat_models.get_conversation_messages(conversation_id, user_id)
-        
+        messages = chat_models.get_conversation_messages(
+            conversation_id, user_id)
+
         if messages is None:
             return jsonify({"error": "Conversation not found or access denied"}), 404
 
@@ -122,7 +123,7 @@ def delete_conversation(conversation_id):
 
     try:
         success = chat_models.delete_conversation(conversation_id, user_id)
-        
+
         if not success:
             return jsonify({"error": "Conversation not found or access denied"}), 404
 
@@ -177,34 +178,36 @@ def chat_stream():
                 conversation_id = int(conversation_id)
             except (ValueError, TypeError):
                 return jsonify({"error": "Invalid conversation_id format"}), 400
-            
-            conv = chat_models.get_conversation_for_user(conversation_id, user_id)
+
+            conv = chat_models.get_conversation_for_user(
+                conversation_id, user_id)
             if not conv:
                 return jsonify({"error": "Conversation not found or access denied"}), 404
         else:
             title = (message[:60] + "...") if len(message) > 60 else message
-            conversation_id = chat_models.create_conversation(user_id, title=title)
+            conversation_id = chat_models.create_conversation(
+                user_id, title=title)
 
         # Update conversation timestamp
         chat_models.update_conversation_timestamp(conversation_id)
 
         # store user message with model_version_id
         chat_models.insert_message(
-            conversation_id, 
-            role="user", 
+            conversation_id,
+            role="user",
             content=message,
             sender_user_id=user_id,
         )
 
         # Search for relevant articles
-        top_k = 5  # Increased to get more context
+        top_k = 3  # Increased to get more context
         results = search_service.search(message, top_n=top_k)
-        
+
         # Debug logging
         current_app.logger.info(f"Query: {message}")
         current_app.logger.info(f"Found {len(results)} results")
         current_app.logger.info(f"Using model version: {model_version_id}")
-        
+
         for i, result in enumerate(results, 1):
             doc = result.get("document", {})
             current_app.logger.info(
@@ -212,15 +215,15 @@ def chat_stream():
                 f"(similarity: {result.get('similarity', 0):.3f}) - "
                 f"Content preview: {doc.get('content', '')[:100]}"
             )
-        
+
         vectors_json_str = json.dumps(results, ensure_ascii=False)
 
         # Stream LLM reply (real response) with model_version_id
         return Response(
             stream_with_context(
                 stream_assistant_reply(
-                    message, 
-                    vectors_json_str, 
+                    message,
+                    vectors_json_str,
                     conversation_id=conversation_id,
                     model_version_id=model_version_id
                 )

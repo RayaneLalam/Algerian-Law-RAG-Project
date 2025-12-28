@@ -370,7 +370,6 @@ export const ChatMessages = ({ messages, isLoading }) => {
                     fontSize: "18px",
                     lineHeight: "1.6",
                     color: assistantText,
-                    whiteSpace: "pre-wrap", // Add this to handle raw newlines better
                   }}
                 >
                   <ReactMarkdown components={customMarkdownComponents}>
