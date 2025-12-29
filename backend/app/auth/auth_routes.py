@@ -2,18 +2,22 @@
 from flask import request, jsonify, current_app, g
 from . import bp
 from .auth_models import create_user, get_user_by_username, get_user_by_id, verify_password
-from .utils import create_access_token
+from .utils import create_access_token, decode_token
 from .auth_middleware import jwt_required, admin_required
 import json
 
-@bp.route("/register", methods=["POST"])
+@bp.route("/register", methods=["POST", "OPTIONS"])
 def register():
     """
     JSON body: {"username": "...", "email": "...", "password": "...", "role": "user" (optional)}
     Role 'admin' is allowed only if:
       - There are no users yet (first sign-up), OR
       - The requester is already an admin (provides admin token).
+    Note: username maps to users.display_name in DB for compatibility.
     """
+    if request.method == "OPTIONS":
+        return "", 204
+
     data = request.get_json() or {}
     username = data.get("username")
     email = data.get("email")
@@ -25,22 +29,19 @@ def register():
 
     # If attempting to create admin, check rules:
     if role == "admin":
-        # allow if no users exist
         from database.db_setup import get_db
         db = get_db()
         row = db.execute("SELECT COUNT(*) as c FROM users").fetchone()
         if row and row["c"] == 0:
-            pass  # allow initial admin creation
+            # allow initial admin creation
+            pass
         else:
-            # require admin token
             token = None
             auth = request.headers.get("Authorization", "")
             if auth.startswith("Bearer "):
                 token = auth.split(" ", 1)[1]
             if not token:
                 return jsonify({"error": "Admin creation requires existing admin auth"}), 403
-            # decode token and verify role
-            from .utils import decode_token
             payload = None
             try:
                 payload = decode_token(token)
@@ -57,13 +58,18 @@ def register():
     if not user:
         return jsonify({"error": "could not create user (maybe duplicate email)"}), 400
 
-    return jsonify({"message": "user created", "user_id": user["id"], "role": user["role"]}), 201
+    return jsonify({
+        "message": "user created",
+        "user_id": user["id"],
+        "role": "user"
+    }), 201
+
 
 @bp.route("/login", methods=["POST"])
 def login():
     """
     JSON: {"username": "...", "password": "..."}
-    Returns: {"access_token": "...", "expires_in": seconds, "role": "..."}
+    Returns: {"access_token": "...", "expires_in": seconds, "role": "...", "user": {...}}
     """
     data = request.get_json() or {}
     username = data.get("username")
@@ -81,14 +87,15 @@ def login():
     # token expiration: config or default 1 hour
     expires_seconds = int(current_app.config.get("JWT_ACCESS_TOKEN_EXPIRES", 3600))
     from datetime import timedelta
-    token = create_access_token(user["id"], user["role"], expires_delta=timedelta(seconds=expires_seconds))
+    token = create_access_token(user["id"], "user", expires_delta=timedelta(seconds=expires_seconds))
 
     return jsonify({
         "access_token": token,
         "expires_in": expires_seconds,
-        "role": user["role"],
-        "user": {"id": user["id"], "username": user["username"], "email": user["email"]}
+        "role": "user",
+        "user": {"id": user["id"], "username": user["display_name"], "email": user["email"]}
     }), 200
+
 
 @bp.route("/me", methods=["GET"])
 @jwt_required
@@ -96,10 +103,11 @@ def me():
     user = g.current_user
     return jsonify({
         "id": user["id"],
-        "username": user["username"],
+        "username": user["display_name"],
         "email": user["email"],
-        "role": user.get("role", "user")
+        "role": "user"
     })
+
 
 # Example admin-only endpoint
 @bp.route("/admin-only", methods=["GET"])

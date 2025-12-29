@@ -1,19 +1,24 @@
 import React from "react";
 import { useLanguageTheme } from "../contexts/LanguageThemeContext";
-import { MdLanguage, MdLogout } from "react-icons/md";
+import { useAuth } from "../contexts/AuthContext";
+import { MdLanguage, MdLogout, MdDelete } from "react-icons/md";
 import { BsSun, BsMoon } from "react-icons/bs";
 import { IoMdHelpCircle } from "react-icons/io";
-import { HiOutlineMenuAlt2 } from "react-icons/hi"; // new menu icon
+import { HiOutlineMenuAlt2 } from "react-icons/hi";
 
 export const Sidebar = ({
   isOpen,
   onToggle,
   onNewChat,
   onSelectConversation,
+  onDeleteConversation,
   conversations,
+  conversationsLoading,
+  currentConversationId,
 }) => {
   const { language, theme, toggleLanguage, toggleTheme, t } =
     useLanguageTheme();
+  const { logout } = useAuth();
   const isArabic = language === "ar";
   const isDark = theme === "dark";
 
@@ -26,22 +31,27 @@ export const Sidebar = ({
 
   return (
     <div
-      className={`absolute inset-y-0 w-64 transition-transform duration-300 z-40 flex flex-col border-r ${
-        isOpen
-          ? "translate-x-0"
-          : isArabic
-            ? "translate-x-full"
-            : "-translate-x-full"
-      }`}
       style={{
+        position: "fixed",
+        top: 0,
+        bottom: 0,
+        [isArabic ? "right" : "left"]: 0,
+        width: "256px",
         backgroundColor: isDark ? "#232323" : "#f1f1f1",
         borderColor: isDark ? "#4a4b4a" : "#e5e5e5",
         fontFamily: isArabic ? '"Cairo", sans-serif' : '"Inter", sans-serif',
         [isArabic ? "borderLeft" : "borderRight"]: `1px solid ${
           isDark ? "#4a4b4a" : "#e5e5e5"
         }`,
-        right: isArabic ? 0 : "auto",
-        left: isArabic ? "auto" : 0,
+        transform: isOpen
+          ? "translateX(0)"
+          : isArabic
+            ? "translateX(100%)"
+            : "translateX(-100%)",
+        transition: "transform 0.3s ease",
+        zIndex: 40,
+        display: "flex",
+        flexDirection: "column",
       }}
     >
       {/* Header */}
@@ -55,7 +65,7 @@ export const Sidebar = ({
       >
         <img
           alt="logo"
-          src="\gold_logo.svg"
+          src="/gold_logo.svg"
           width={40}
           onClick={onNewChat}
           style={{ cursor: "pointer" }}
@@ -63,7 +73,7 @@ export const Sidebar = ({
 
         {/* Sidebar Toggle */}
         <button
-          onClick={onToggle} // <-- important
+          onClick={onToggle}
           style={{
             width: "32px",
             height: "32px",
@@ -104,8 +114,9 @@ export const Sidebar = ({
           color: textColor,
           border: `1px solid ${borderColor}`,
           cursor: "pointer",
-          fontWeight: "400",
-          fontSize: "16px",
+          fontWeight: "500",
+          fontSize: "14px",
+          fontFamily: isArabic ? '"Cairo", sans-serif' : '"Inter", sans-serif',
           display: "flex",
           gap: "8px",
           transition: "background-color 0.2s",
@@ -137,7 +148,18 @@ export const Sidebar = ({
         >
           {t.recent}
         </p>
-        {conversations.length === 0 ? (
+        {conversationsLoading ? (
+          <p
+            style={{
+              fontSize: "16px",
+              color: secondaryText,
+              padding: "12px",
+              textAlign: "center",
+            }}
+          >
+            {isArabic ? "جاري التحميل..." : "Chargement..."}
+          </p>
+        ) : conversations.length === 0 ? (
           <p
             style={{
               fontSize: "16px",
@@ -152,29 +174,64 @@ export const Sidebar = ({
           conversations.map((conv) => (
             <div
               key={conv.id}
-              onClick={() => {
-                onSelectConversation(conv.id);
-                onToggle();
-              }}
               style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
                 padding: "8px",
                 borderRadius: "8px",
                 cursor: "pointer",
                 fontSize: "18px",
                 color: textColor,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                backgroundColor:
+                  currentConversationId === parseInt(conv.id)
+                    ? hoverBg
+                    : "transparent",
                 transition: "background-color 0.2s",
               }}
               onMouseEnter={(e) =>
                 (e.currentTarget.style.backgroundColor = hoverBg)
               }
               onMouseLeave={(e) =>
-                (e.currentTarget.style.backgroundColor = "transparent")
+                (e.currentTarget.style.backgroundColor =
+                  currentConversationId === parseInt(conv.id)
+                    ? hoverBg
+                    : "transparent")
               }
             >
-              {conv.title}
+              <div
+                onClick={() => onSelectConversation(conv.id)}
+                style={{
+                  flex: 1,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {conv.title}
+              </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteConversation(conv.id);
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: "4px",
+                  display: "flex",
+                  alignItems: "center",
+                  color: secondaryText,
+                  transition: "color 0.2s",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "#ef4444")}
+                onMouseLeave={(e) =>
+                  (e.currentTarget.style.color = secondaryText)
+                }
+              >
+                <MdDelete size={18} />
+              </button>
             </div>
           ))
         )}
@@ -306,6 +363,7 @@ export const Sidebar = ({
 
         {/* Logout */}
         <button
+          onClick={logout}
           style={{
             width: "100%",
             display: "flex",

@@ -1,43 +1,52 @@
 import os
 
-def _load_prompt_template(path: str) -> str:
-    default_template = (
-        "You are a helpful assistant.\n\n"
-        "User question:\n{query}\n\n"
-        "Context:\n{context}\n\n"
-        "Answer concisely using the context when possible.\n"
-    )
+
+def _load_prompt_template(path):
+    """Load prompt template from file."""
     try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                txt = f.read()
-                if "{query}" not in txt or "{context}" not in txt:
-                    return default_template
-                return txt
-        else:
-            return default_template
-    except Exception:
-        return default_template
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        print(f"Error loading template: {e}")
+        return """Tu es un assistant juridique expert en droit algérien. Réponds de manière précise, professionnelle et factuelle en te basant strictement sur le contexte fourni. Si l'information n'est pas dans le contexte, indique-le clairement.
+
+Contexte juridique:
+{context}
+
+Question: {query}
+
+Réponse:"""
 
 
 def _format_context_from_results(results):
-    lines = []
-    for i, r in enumerate(results, start=1):
-        doc = r.get("document") if isinstance(r, dict) and r.get("document") else r
-        if isinstance(doc, dict):
-            titre = doc.get("titre") or doc.get("title") or f"doc_{r.get('index', i-1)}"
-            texte = doc.get("texte") or doc.get("text") or ""
-        else:
-            titre = f"doc_{i}"
-            texte = str(doc)
+    """
+    Format search results into a readable context block for the LLM.
+    Each result contains a legal document with source type, header, and content.
+    """
+    if not results:
+        return "Aucun contexte juridique disponible."
 
-        sim = r.get("similarity", None) if isinstance(r, dict) else None
-        sim_str = f" (sim={sim:.4f})" if isinstance(sim, (float, int)) else ""
-        short_text = texte.strip().replace("\n", " ")
-        if len(short_text) > 400:
-            short_text = short_text[:390].rstrip() + "…"
+    context_parts = []
 
-        lines.append(f"{i}. {titre} — {short_text}{sim_str}")
-    if not lines:
-        return "Aucun contexte trouvé."
-    return "\n".join(lines)
+    for i, result in enumerate(results, start=1):
+        # Extract the document from the result
+        doc = result.get("document", {})
+
+        # Get document metadata
+        doc_type = doc.get("source_document_type", "DOCUMENT").upper()
+        header = doc.get("header", "Sans titre")
+        content = doc.get("content", "")
+
+        # Get similarity score
+        similarity = result.get("similarity", 0.0)
+
+        # Format this document nicely
+        doc_text = f"--- Document {i} ---\n"
+        doc_text += f"Type: {doc_type}\n"
+        doc_text += f"Référence: {header}\n"
+        doc_text += f"Pertinence: {similarity:.3f}\n"
+        doc_text += f"Contenu:\n{content}\n"
+
+        context_parts.append(doc_text)
+
+    return "\n".join(context_parts)

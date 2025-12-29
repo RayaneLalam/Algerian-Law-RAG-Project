@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useLayoutEffect } from "react";
 import { useLanguageTheme } from "./contexts/LanguageThemeContext";
+import { useAuth } from "./contexts/AuthContext";
 import { Sidebar } from "./components/Sidebar";
 import { WelcomeScreen } from "./screens/WelcomeScreen";
 import { ChatMessages } from "./components/ChatMessages";
 import { InputArea } from "./components/InputArea";
-import { MdOutlineArrowLeft, MdOutlineArrowRight } from "react-icons/md";
-
+import { AuthScreen } from "./components/AuthScreen";
+import { HiOutlineMenuAlt2 } from "react-icons/hi";
 export const App = () => {
   const { language, theme } = useLanguageTheme();
+  const { isAuthenticated, isLoading: authLoading, token } = useAuth();
   const isArabic = language === "ar";
   const isDark = theme === "dark";
 
@@ -17,23 +19,83 @@ export const App = () => {
   const [isInputCentered, setIsInputCentered] = useState(true);
   const [conversations, setConversations] = useState([]);
   const [currentConversationId, setCurrentConversationId] = useState(null);
+  const [conversationsLoading, setConversationsLoading] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [conversationToDelete, setConversationToDelete] = useState(null);
 
-  // Load conversations from localStorage
+  // Load conversations from backend
   useEffect(() => {
-    const saved = localStorage.getItem("conversations");
-    if (saved) setConversations(JSON.parse(saved));
+    if (isAuthenticated && token) {
+      fetchConversations();
+    }
+  }, [isAuthenticated, token]);
+
+  const fetchConversations = async () => {
+    setConversationsLoading(true);
+    try {
+      const response = await fetch("http://localhost:5000/conversations", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setConversations(data.conversations || []);
+      } else {
+        console.error("Failed to fetch conversations");
+      }
+    } catch (error) {
+      console.error("Error fetching conversations:", error);
+    } finally {
+      setConversationsLoading(false);
+    }
+  };
+
+  const fetchConversationMessages = async (conversationId) => {
+    try {
+      const response = await fetch(
+        `http://localhost:5000/conversations/${conversationId}/messages`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        const formattedMessages = data.messages.map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+        }));
+        return formattedMessages;
+      } else {
+        console.error("Failed to fetch messages");
+        return [];
+      }
+    } catch (error) {
+      console.error("Error fetching messages:", error);
+      return [];
+    }
+  };
+
+  useLayoutEffect(() => {
+    const handleResize = () => {
+      setIsShowSidebar(window.innerWidth > 640);
+    };
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
-
-  // Save conversations to localStorage
-  useEffect(() => {
-    localStorage.setItem("conversations", JSON.stringify(conversations));
-  }, [conversations]);
 
   const handleNewChat = () => {
     setMessages([]);
     setIsInputCentered(true);
     setCurrentConversationId(null);
-    setIsShowSidebar(false);
+    if (window.innerWidth <= 640) {
+      setIsShowSidebar(false);
+    }
   };
 
   const handleSendMessage = async (text) => {
@@ -50,185 +112,375 @@ export const App = () => {
     ];
     setMessages(updatedMessages);
 
-    // Save or update conversation
-    if (!currentConversationId) {
-      const newId = Date.now().toString();
-      setCurrentConversationId(newId);
-      setConversations((prev) => [
-        ...prev,
-        {
-          id: newId,
-          title: userMessage.substring(0, 50),
-          messages: updatedMessages,
-          createdAt: new Date().toISOString(),
+    try {
+      const testModelVersionId = "default-model-v1";
+
+      const response = await fetch("http://localhost:5000/chat_stream", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
-      ]);
-    } else {
-      setConversations((prev) =>
-        prev.map((conv) =>
-          conv.id === currentConversationId
-            ? { ...conv, messages: updatedMessages }
-            : conv
-        )
-      );
-    }
+        body: JSON.stringify({
+          message: userMessage,
+          conversation_id: currentConversationId,
+          model_version_id: testModelVersionId,
+        }),
+      });
 
-    // Simulate API delay
-    await new Promise((resolve) => setTimeout(resolve, 800));
+      if (!response.ok || !response.body) {
+        throw new Error(`Server error: ${response.statusText}`);
+      }
 
-    const dummyResponse = isArabic
-      ? `**إجابتي هي:**  
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let displayedText = "";
 
-أنا **Konan.ai**، مساعد ذكاء اصطناعي متخصص في **القانون الجزائري**.  
-يمكنني مساعدتك في:  
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-- **شرح النصوص القانونية**  
-- **تلخيص القوانين والمراسيم**  
-- **ترجمة المواد بين العربية والفرنسية**  
-- **تقديم إجابات مدعومة بالمراجع القانونية**  
+        const chunk = decoder.decode(value, { stream: true });
 
-ما هو النص أو السؤال القانوني الذي ترغب في فهمه؟`
-      : `**Voici ma réponse :**  
+        const lines = chunk
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.replace(/^data:\s*/, "").trim());
 
-Je suis **Konan.ai**, un assistant IA spécialisé dans **le droit algérien**.  
-Je peux vous aider à :  
+        for (const line of lines) {
+          if (line === "[DONE]") break;
 
-- **Expliquer les textes juridiques**  
-- **Résumer les lois et décrets**  
-- **Traduire les articles entre l’arabe et le français**  
-- **Fournir des réponses basées sur des sources juridiques fiables**  
+          displayedText += line + " ";
 
-Quel texte ou quelle question juridique souhaitez-vous comprendre ?`;
-
-    let displayedText = "";
-    const words = dummyResponse.split(" ");
-
-    for (let i = 0; i < words.length; i++) {
-      displayedText += words[i] + (i < words.length - 1 ? " " : "");
+          setMessages((prev) => {
+            const updated = [...prev];
+            updated[updated.length - 1] = {
+              ...updated[updated.length - 1],
+              content: displayedText.trim(),
+            };
+            return updated;
+          });
+        }
+      }
 
       setMessages((prev) => {
         const updated = [...prev];
         updated[updated.length - 1] = {
           ...updated[updated.length - 1],
-          content: displayedText,
+          content: displayedText.trim(),
         };
         return updated;
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
+      await fetchConversations();
 
-    // Update conversation with final assistant message
-    if (currentConversationId) {
-      setConversations((prev) =>
-        prev.map((conv) =>
-          conv.id === currentConversationId
-            ? {
-                ...conv,
-                messages: [
-                  ...updatedMessages.slice(0, -1),
-                  { role: "assistant", content: dummyResponse },
-                ],
-              }
-            : conv
-        )
-      );
+      if (!currentConversationId) {
+        const convResponse = await fetch(
+          "http://localhost:5000/conversations",
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+        if (convResponse.ok) {
+          const data = await convResponse.json();
+          if (data.conversations && data.conversations.length > 0) {
+            setCurrentConversationId(parseInt(data.conversations[0].id));
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Chat stream error:", err);
+      alert("Error connecting to the assistant.");
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
   };
 
-  const handleSelectConversation = (id) => {
-    const conversation = conversations.find((c) => c.id === id);
-    if (conversation) {
-      setMessages(conversation.messages);
-      setCurrentConversationId(id);
-      setIsInputCentered(false);
+  const handleSelectConversation = async (id) => {
+    const conversationId = parseInt(id);
+    setCurrentConversationId(conversationId);
+    setIsInputCentered(false);
+
+    const conversationMessages =
+      await fetchConversationMessages(conversationId);
+    setMessages(conversationMessages);
+
+    if (window.innerWidth <= 640) {
       setIsShowSidebar(false);
     }
   };
 
-  useLayoutEffect(() => {
-    const handleResize = () => {
-      setIsShowSidebar(window.innerWidth <= 640);
-    };
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  const handleDeleteConversation = async (id) => {
+    setConversationToDelete(id);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!conversationToDelete) return;
+
+    try {
+      const response = await fetch(
+        `http://localhost:5000/conversations/${conversationToDelete}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (response.ok) {
+        if (currentConversationId === parseInt(conversationToDelete)) {
+          handleNewChat();
+        }
+        await fetchConversations();
+      } else {
+        console.error("Failed to delete conversation");
+      }
+    } catch (error) {
+      console.error("Error deleting conversation:", error);
+    } finally {
+      setShowDeleteModal(false);
+      setConversationToDelete(null);
+    }
+  };
+
+  const cancelDelete = () => {
+    setShowDeleteModal(false);
+    setConversationToDelete(null);
+  };
 
   const bgColor = isDark ? "#232323" : "#f1f1f1";
+
+  if (authLoading) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "100vh",
+          backgroundColor: bgColor,
+          fontFamily: isArabic ? '"Cairo", sans-serif' : '"Inter", sans-serif',
+        }}
+      >
+        <div
+          style={{ color: isDark ? "#ffffff" : "#000000", fontSize: "18px" }}
+        >
+          {isArabic ? "جاري التحميل..." : "Chargement..."}
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <AuthScreen />;
+  }
 
   return (
     <div
       style={{
         display: "flex",
         height: "100vh",
+        width: "100vw",
         backgroundColor: bgColor,
-        direction: isArabic ? "rtl" : "ltr",
-        transition: "margin 0.3s ease", // smooth animation
-        marginLeft: isShowSidebar && !isArabic ? "256px" : "0", // sidebar width = 256px
-        marginRight: isShowSidebar && isArabic ? "256px" : "0",
+        fontFamily: isArabic ? '"Cairo", sans-serif' : '"Inter", sans-serif',
+        overflow: "hidden",
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
       }}
     >
-      {/* Sidebar */}
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.5)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            zIndex: 50,
+            backdropFilter: "blur(4px)",
+          }}
+          onClick={cancelDelete}
+        >
+          <div
+            style={{
+              backgroundColor: isDark ? "#2a2a2a" : "#ffffff",
+              borderRadius: "12px",
+              padding: "24px",
+              maxWidth: "400px",
+              width: "90%",
+              boxShadow: "0 8px 32px rgba(0, 0, 0, 0.2)",
+              fontFamily: isArabic
+                ? '"Cairo", sans-serif'
+                : '"Inter", sans-serif',
+              direction: isArabic ? "rtl" : "ltr",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              style={{
+                fontSize: "20px",
+                fontWeight: "600",
+                color: isDark ? "#ffffff" : "#1c1c1c",
+                marginBottom: "12px",
+              }}
+            >
+              {isArabic ? "تأكيد الحذف" : "Confirmer la suppression"}
+            </h3>
+            <p
+              style={{
+                fontSize: "16px",
+                color: isDark ? "#adadad" : "#6b6b6b",
+                marginBottom: "24px",
+                lineHeight: "1.5",
+              }}
+            >
+              {isArabic
+                ? "هل أنت متأكد من أنك تريد حذف هذه المحادثة؟ لا يمكن التراجع عن هذا الإجراء."
+                : "Êtes-vous sûr de vouloir supprimer cette conversation ? Cette action ne peut pas être annulée."}
+            </p>
+            <div
+              style={{
+                display: "flex",
+                gap: "12px",
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                onClick={cancelDelete}
+                style={{
+                  padding: "10px 20px",
+                  borderRadius: "8px",
+                  border: `1px solid ${isDark ? "#4a4b4a" : "#e5e5e5"}`,
+                  backgroundColor: "transparent",
+                  color: isDark ? "#ffffff" : "#1c1c1c",
+                  cursor: "pointer",
+                  fontSize: "16px",
+                  fontWeight: "500",
+                  transition: "background-color 0.2s",
+                }}
+                onMouseEnter={(e) =>
+                  (e.currentTarget.style.backgroundColor = isDark
+                    ? "#3a3a3a"
+                    : "#f0f0f0")
+                }
+                onMouseLeave={(e) =>
+                  (e.currentTarget.style.backgroundColor = "transparent")
+                }
+              >
+                {isArabic ? "إلغاء" : "Annuler"}
+              </button>
+              <button
+                onClick={confirmDelete}
+                style={{
+                  padding: "10px 20px",
+                  borderRadius: "8px",
+                  border: "none",
+                  backgroundColor: "#ef4444",
+                  color: "#ffffff",
+                  cursor: "pointer",
+                  fontSize: "16px",
+                  fontWeight: "500",
+                  transition: "background-color 0.2s",
+                }}
+                onMouseEnter={(e) =>
+                  (e.currentTarget.style.backgroundColor = "#dc2626")
+                }
+                onMouseLeave={(e) =>
+                  (e.currentTarget.style.backgroundColor = "#ef4444")
+                }
+              >
+                {isArabic ? "حذف" : "Supprimer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Sidebar
         isOpen={isShowSidebar}
         onToggle={() => setIsShowSidebar((prev) => !prev)}
         onNewChat={handleNewChat}
         onSelectConversation={handleSelectConversation}
+        onDeleteConversation={handleDeleteConversation}
         conversations={conversations}
+        conversationsLoading={conversationsLoading}
+        currentConversationId={currentConversationId}
       />
 
-      {/* Main Chat */}
       <div
         style={{
           flex: 1,
           display: "flex",
           flexDirection: "column",
           position: "relative",
+          height: "100vh",
           transition: "margin 0.3s ease",
+          marginLeft:
+            isShowSidebar && !isArabic && window.innerWidth > 640
+              ? "256px"
+              : "0",
+          marginRight:
+            isShowSidebar && isArabic && window.innerWidth > 640
+              ? "256px"
+              : "0",
+          direction: isArabic ? "rtl" : "ltr",
         }}
       >
-        {/* Toggle Button */}
-        <button
-          onClick={() => setIsShowSidebar(!isShowSidebar)}
-          style={{
-            position: "absolute",
-            top: "16px",
-            [isArabic ? "right" : "left"]: "16px",
-            zIndex: 20,
-            padding: "8px",
-            backgroundColor: isDark
-              ? "rgba(74, 75, 74, 0.5)"
-              : "rgba(229, 229, 229, 0.5)",
-            borderRadius: "8px",
-            border: "none",
-            cursor: "pointer",
-            transition: "background-color 0.2s",
-          }}
-        >
-          {isShowSidebar ? (
-            <MdOutlineArrowRight
-              size={24}
-              color={isDark ? "#ffffff" : "#000000"}
-            />
-          ) : (
-            <MdOutlineArrowLeft
-              size={24}
-              color={isDark ? "#ffffff" : "#000000"}
-            />
-          )}
-        </button>
+        {/* Floating toggle button - shows when sidebar is closed */}
+        {!isShowSidebar && (
+          <button
+            onClick={() => setIsShowSidebar(true)}
+            style={{
+              position: "absolute",
+              top: "16px",
+              [isArabic ? "right" : "left"]: "16px",
+              zIndex: 30,
+              width: "40px",
+              height: "40px",
+              borderRadius: "8px",
+              border: "none",
+              cursor: "pointer",
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              backgroundColor: isDark ? "#4a4b4a" : "#e5e5e5",
+              color: isDark ? "#ffffff" : "#1c1c1c",
+              transition: "background-color 0.2s",
+              boxShadow: "0 2px 8px rgba(0, 0, 0, 0.1)",
+            }}
+            onMouseEnter={(e) =>
+              (e.currentTarget.style.backgroundColor = isDark
+                ? "#5a5b5a"
+                : "#d4d4d4")
+            }
+            onMouseLeave={(e) =>
+              (e.currentTarget.style.backgroundColor = isDark
+                ? "#4a4b4a"
+                : "#e5e5e5")
+            }
+          >
+            <HiOutlineMenuAlt2 size={20} />
+          </button>
+        )}
 
-        {/* Messages or Welcome */}
         {messages.length === 0 ? (
           <WelcomeScreen />
         ) : (
           <ChatMessages messages={messages} isLoading={isLoading} />
         )}
 
-        {/* Input Area */}
         <InputArea
           onSend={handleSendMessage}
           isLoading={isLoading}

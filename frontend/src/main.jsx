@@ -1,13 +1,16 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App.jsx";
-import { LanguageThemeProvider } from "./contexts/LanguageThemeContext";
-import "./index.css";
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import { LanguageThemeProvider } from './contexts/LanguageThemeContext';
+import { AuthProvider } from './contexts/AuthContext';
 
-ReactDOM.createRoot(document.getElementById("root")).render(
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
   <React.StrictMode>
     <LanguageThemeProvider>
-      <App />
+      <AuthProvider>
+        <App />
+      </AuthProvider>
     </LanguageThemeProvider>
   </React.StrictMode>
 );

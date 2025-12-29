@@ -52,7 +52,7 @@ export const WelcomeScreen = () => {
         style={{
           textAlign: "center",
           marginBottom: "48px",
-          maxWidth: "600px",
+          maxWidth: "1000px",
           display: "flex",
           flexDirection: "column",
           gap: "16px",
@@ -68,7 +68,7 @@ export const WelcomeScreen = () => {
         >
           <span
             style={{
-              fontSize: "48px",
+              fontSize: "46px",
               fontWeight: "600",
               color: textColor,
               marginBottom: "12px",
@@ -154,7 +154,7 @@ export const WelcomeScreen = () => {
                   ? '"Cairo", sans-serif'
                   : '"Inter", sans-serif',
                 color: secondaryText,
-                ontWeight: "300",
+                fontWeight: "300",
                 margin: 0,
                 lineHeight: "1.5",
               }}
