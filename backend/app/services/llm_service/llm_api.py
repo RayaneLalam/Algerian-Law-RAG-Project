@@ -41,10 +41,14 @@ class LLM_Service:
                 f"{self.base_url}/chat",
                 json={
                     "model": self.model,
-                    "messages": [
-                        {"role": "user", "content": message}
-                    ],
-                    "stream": True
+                    "messages": [{"role": "user", "content": message}],
+                    "stream": True,
+                    "options": {
+                    "temperature": 0.1,
+                    "num_predict": 500,
+                    # Empêche le modèle de trop "vibrer" sur les tokens
+                    "repeat_penalty": 1.1
+                    }
                 },
                 stream=True,
                 timeout=300

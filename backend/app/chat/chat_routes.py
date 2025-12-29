@@ -200,7 +200,7 @@ def chat_stream():
         )
 
         # Search for relevant articles
-        top_k = 3  # Increased to get more context
+        top_k = 5  # Increased to get more context
         results = search_service.search(message, top_n=top_k)
 
         # Debug logging
