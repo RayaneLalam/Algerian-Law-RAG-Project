@@ -1,17 +1,33 @@
-import React, { createContext, useState, useCallback } from "react";
+import React, { createContext, useState, useCallback, useEffect } from "react";
 
 export const LanguageThemeContext = createContext();
 
 export const LanguageThemeProvider = ({ children }) => {
-  const [language, setLanguage] = useState("fr"); // 'fr' or 'ar'
-  const [theme, setTheme] = useState("light"); // 'dark' or 'light'
+  const [language, setLanguage] = useState("fr");
+  const [theme, setTheme] = useState("light");
+  const [queryLanguage, setQueryLanguage] = useState("auto");
 
-  const toggleLanguage = useCallback(() => {
-    setLanguage((prev) => (prev === "fr" ? "ar" : "fr"));
+  useEffect(() => {
+    const saved = localStorage.getItem("userLanguage");
+    if (saved) setLanguage(saved);
+    const savedTheme = localStorage.getItem("userTheme");
+    if (savedTheme) setTheme(savedTheme);
   }, []);
 
+  const toggleLanguage = useCallback(() => {
+    const newLang = language === "fr" ? "ar" : "fr";
+    setLanguage(newLang);
+    localStorage.setItem("userLanguage", newLang);
+  }, [language]);
+
   const toggleTheme = useCallback(() => {
-    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+    const newTheme = theme === "dark" ? "light" : "dark";
+    setTheme(newTheme);
+    localStorage.setItem("userTheme", newTheme);
+  }, [theme]);
+
+  const setQueryLanguagePreference = useCallback((lang) => {
+    setQueryLanguage(lang);
   }, []);
 
   const t = {
@@ -42,6 +58,9 @@ export const LanguageThemeProvider = ({ children }) => {
       darkMode: "Mode sombre",
       updates: "Mises à jour & FAQ",
       logout: "Se déconnecter",
+      detectLanguage: "Auto-détection",
+      french: "Français",
+      arabic: "عربي",
     },
     ar: {
       newChat: " محادثة جديدة",
@@ -67,6 +86,9 @@ export const LanguageThemeProvider = ({ children }) => {
       darkMode: "وضع مظلم",
       updates: "تحديثات والأسئلة الشائعة",
       logout: "تسجيل الخروج",
+      detectLanguage: "الكشف التلقائي",
+      french: "Français",
+      arabic: "عربي",
     },
   };
 
@@ -75,8 +97,10 @@ export const LanguageThemeProvider = ({ children }) => {
       value={{
         language,
         theme,
+        queryLanguage,
         toggleLanguage,
         toggleTheme,
+        setQueryLanguagePreference,
         t: t[language],
       }}
     >

@@ -1,8 +1,7 @@
 @import "tailwindcss";
 
-/* Custom Theme Configuration for Tailwind v4 */
-@theme {
-  /* Custom Colors */
+/* Custom Color Variables */
+:root {
   --color-accent: #d4af37;
   --color-accent-light: rgba(212, 175, 55, 0.08);
   --color-accent-dark: rgba(212, 175, 55, 0.1);

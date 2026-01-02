@@ -1,10 +1,21 @@
 # app/__init__.py
 from flask import Flask
+from flask_cors import CORS
 from database import db_setup
-from app.config import settings  # import your settings module
+from app.config.settings import settings
 
 def create_app():
     app = Flask(__name__)
+
+    # Enable CORS for all routes
+    CORS(app, resources={
+        r"/*": {
+            "origins": ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"],
+            "methods": ["GET", "POST", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"],
+            "supports_credentials": True
+        }
+    })
 
     # Load settings
     app.config['SECRET_KEY'] = settings.SECRET_KEY

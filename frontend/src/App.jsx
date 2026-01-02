@@ -5,6 +5,7 @@ import { WelcomeScreen } from "./screens/WelcomeScreen";
 import { ChatMessages } from "./components/ChatMessages";
 import { InputArea } from "./components/InputArea";
 import { MdOutlineArrowLeft, MdOutlineArrowRight } from "react-icons/md";
+import { apiClient } from "./services/apiClient";
 
 export const App = () => {
   const { language, theme } = useLanguageTheme();
@@ -29,14 +30,7 @@ export const App = () => {
     localStorage.setItem("conversations", JSON.stringify(conversations));
   }, [conversations]);
 
-  const handleNewChat = () => {
-    setMessages([]);
-    setIsInputCentered(true);
-    setCurrentConversationId(null);
-    setIsShowSidebar(false);
-  };
-
-  const handleSendMessage = async (text) => {
+  const handleSendMessage = async (text, queryLanguage = "auto") => {
     if (!text.trim() || isLoading) return;
 
     setIsInputCentered(false);
@@ -46,7 +40,7 @@ export const App = () => {
     const updatedMessages = [
       ...messages,
       { role: "user", content: userMessage },
-      { role: "assistant", content: "" },
+      { role: "assistant", content: "", language: queryLanguage },
     ];
     setMessages(updatedMessages);
 
@@ -73,69 +67,93 @@ export const App = () => {
       );
     }
 
-    // Simulate API delay
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    try {
+      // Get JWT token from localStorage
+      const token = localStorage.getItem("authToken") || "";
 
-    const dummyResponse = isArabic
-      ? `**إجابتي هي:**  
+      // Call the actual API
+      const response = await apiClient.chatStream(
+        userMessage,
+        currentConversationId,
+        queryLanguage,
+        token
+      );
 
-أنا **Konan.ai**، مساعد ذكاء اصطناعي متخصص في **القانون الجزائري**.  
-يمكنني مساعدتك في:  
+      // Handle streaming response
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let displayedText = "";
 
-- **شرح النصوص القانونية**  
-- **تلخيص القوانين والمراسيم**  
-- **ترجمة المواد بين العربية والفرنسية**  
-- **تقديم إجابات مدعومة بالمراجع القانونية**  
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-ما هو النص أو السؤال القانوني الذي ترغب في فهمه؟`
-      : `**Voici ma réponse :**  
+          const chunk = decoder.decode(value);
+          const lines = chunk.split("\n");
 
-Je suis **Konan.ai**, un assistant IA spécialisé dans **le droit algérien**.  
-Je peux vous aider à :  
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (data.chunk) {
+                  displayedText += data.chunk;
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    updated[updated.length - 1] = {
+                      ...updated[updated.length - 1],
+                      content: displayedText,
+                    };
+                    return updated;
+                  });
+                }
+              } catch (e) {
+                // Ignore JSON parse errors
+              }
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
 
-- **Expliquer les textes juridiques**  
-- **Résumer les lois et décrets**  
-- **Traduire les articles entre l’arabe et le français**  
-- **Fournir des réponses basées sur des sources juridiques fiables**  
-
-Quel texte ou quelle question juridique souhaitez-vous comprendre ?`;
-
-    let displayedText = "";
-    const words = dummyResponse.split(" ");
-
-    for (let i = 0; i < words.length; i++) {
-      displayedText += words[i] + (i < words.length - 1 ? " " : "");
-
+      // Update conversation with final message
+      if (currentConversationId) {
+        setConversations((prev) =>
+          prev.map((conv) =>
+            conv.id === currentConversationId
+              ? {
+                  ...conv,
+                  messages: [
+                    ...updatedMessages.slice(0, -1),
+                    { role: "assistant", content: displayedText, language: queryLanguage },
+                  ],
+                }
+              : conv
+          )
+        );
+      }
+    } catch (error) {
+      console.error("Error calling API:", error);
+      const errorMessage = error.message || "Error communicating with server";
       setMessages((prev) => {
         const updated = [...prev];
         updated[updated.length - 1] = {
           ...updated[updated.length - 1],
-          content: displayedText,
+          content: `Error: ${errorMessage}. Make sure backend is running at http://localhost:5000`,
         };
         return updated;
       });
-
-      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      setIsLoading(false);
     }
+  };
 
-    // Update conversation with final assistant message
-    if (currentConversationId) {
-      setConversations((prev) =>
-        prev.map((conv) =>
-          conv.id === currentConversationId
-            ? {
-                ...conv,
-                messages: [
-                  ...updatedMessages.slice(0, -1),
-                  { role: "assistant", content: dummyResponse },
-                ],
-              }
-            : conv
-        )
-      );
-    }
-
-    setIsLoading(false);
+  const handleNewChat = () => {
+    setMessages([]);
+    setCurrentConversationId(null);
+    setIsInputCentered(true);
+    setIsShowSidebar(false);
   };
 
   const handleSelectConversation = (id) => {
@@ -166,12 +184,11 @@ Quel texte ou quelle question juridique souhaitez-vous comprendre ?`;
         height: "100vh",
         backgroundColor: bgColor,
         direction: isArabic ? "rtl" : "ltr",
-        transition: "margin 0.3s ease", // smooth animation
-        marginLeft: isShowSidebar && !isArabic ? "256px" : "0", // sidebar width = 256px
+        transition: "margin 0.3s ease",
+        marginLeft: isShowSidebar && !isArabic ? "256px" : "0",
         marginRight: isShowSidebar && isArabic ? "256px" : "0",
       }}
     >
-      {/* Sidebar */}
       <Sidebar
         isOpen={isShowSidebar}
         onToggle={() => setIsShowSidebar((prev) => !prev)}
@@ -180,7 +197,6 @@ Quel texte ou quelle question juridique souhaitez-vous comprendre ?`;
         conversations={conversations}
       />
 
-      {/* Main Chat */}
       <div
         style={{
           flex: 1,
@@ -190,7 +206,6 @@ Quel texte ou quelle question juridique souhaitez-vous comprendre ?`;
           transition: "margin 0.3s ease",
         }}
       >
-        {/* Toggle Button */}
         <button
           onClick={() => setIsShowSidebar(!isShowSidebar)}
           style={{
@@ -221,14 +236,12 @@ Quel texte ou quelle question juridique souhaitez-vous comprendre ?`;
           )}
         </button>
 
-        {/* Messages or Welcome */}
         {messages.length === 0 ? (
           <WelcomeScreen />
         ) : (
           <ChatMessages messages={messages} isLoading={isLoading} />
         )}
 
-        {/* Input Area */}
         <InputArea
           onSend={handleSendMessage}
           isLoading={isLoading}

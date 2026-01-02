@@ -21,16 +21,16 @@ def jwt_required(fn):
             return jsonify({"error": "Missing authorization token"}), 401
         try:
             payload = decode_token(token)
+            if not payload:
+                return jsonify({"error": "Invalid or expired token"}), 401
+            user = get_user_by_id(payload.get("sub"))
+            if not user:
+                return jsonify({"error": "User not found"}), 401
+            # Attach user to flask.g
+            g.current_user = user
+            g.current_user_role = payload.get("role")
         except Exception as e:
             return jsonify({"error": "Invalid or expired token"}), 401
-        if not payload:
-            return jsonify({"error": "Invalid token"}), 401
-        user = get_user_by_id(payload.get("sub"))
-        if not user:
-            return jsonify({"error": "User not found"}), 401
-        # Attach user to flask.g
-        g.current_user = user
-        g.current_user_role = payload.get("role")
         return fn(*args, **kwargs)
     return wrapper
 
