@@ -36,19 +36,32 @@
   box-sizing: border-box;
 }
 
-html {
-  scroll-behavior: smooth;
-}
-
+html,
 body {
-  font-family: var(--font-inter);
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: "Inter", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-[dir="rtl"] {
-  font-family: var(--font-cairo);
+#root {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
 }
 
-/* Scrollbar Styling */
+/* Arabic font styling */
+[lang="ar"],
+[dir="rtl"],
+.arabic-text {
+  font-family: "Cairo", sans-serif !important;
+}
+
+/* Scrollbar styling for webkit browsers */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -59,67 +72,38 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #4a4b4a;
+  background: rgba(155, 155, 155, 0.5);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #525252;
+  background: rgba(155, 155, 155, 0.7);
 }
 
-/* Light mode scrollbar */
-@media (prefers-color-scheme: light) {
-  ::-webkit-scrollbar-thumb {
-    background: #e5e5e5;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    background: #a3a3a3;
-  }
+/* Dark mode scrollbar */
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(100, 100, 100, 0.5);
 }
 
-/* Animation for typing effect */
-@keyframes pulse-custom {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 100, 100, 0.7);
 }
 
-.animate-pulse-custom {
-  animation: pulse-custom 2s ease-in-out infinite;
+/* Remove default button styles */
+button {
+  font-family: inherit;
 }
 
-/* Focus states */
-input:focus,
-button:focus {
-  outline: none;
+/* Remove default input styles */
+input {
+  font-family: inherit;
 }
 
-@keyframes bottomGlow {
-  0% {
-    background-size: 100% 100%;
-    background-position: center 100%;
-  }
-  50% {
-    background-size: 120% 120%;
-    background-position: center 98%;
-  }
-  100% {
-    background-size: 100% 100%;
-    background-position: center 100%;
-  }
-}
-
-.welcome-bg {
-  animation: bottomGlow 14s ease-in-out infinite;
-  background-repeat: no-repeat;
-  background-attachment: fixed;
-  background-position: center 100%;
-  background-size: cover;
-  transition: background 0.5s ease;
-  filter: blur(0px);
+/* Prevent text selection on UI elements */
+button,
+.no-select {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
 }

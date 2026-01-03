@@ -58,18 +58,27 @@ def stream_assistant_reply(message, vectors_json_str, conversation_id, language:
     try:
         for chunk in make_reply_stream(message, vectors_json_str, language=language):
             assistant_chunks.append(chunk)
-            yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+            # Send chunk in SSE format without JSON wrapping
+            yield f"data: {chunk}\n\n"
+        
+        # Signal completion
+        yield "data: [DONE]\n\n"
+        
     except GeneratorExit:
         current_app.logger.debug("Client disconnected from SSE stream")
     except Exception as e:
         err = f"[server error while generating reply: {e}]"
         assistant_chunks.append(err)
-        yield f"data: {json.dumps({'chunk': err})}\n\n"
+        yield f"data: {err}\n\n"
     finally:
+        # join and persist assistant full text (even if partial)
+        print("got here")
         assistant_full = "".join(assistant_chunks).strip()
         if assistant_full and conversation_id:
             try:
-                chat_models.insert_message(conversation_id, "assistant", assistant_full)
+                chat_models.insert_message(conversation_id, "assistant", content=assistant_full)
                 chat_models.update_conversation_timestamp(conversation_id)
             except Exception:
                 current_app.logger.exception("Failed to save assistant message")
+
+

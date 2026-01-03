@@ -6,6 +6,7 @@ dummydata/*
 app/config/*
 cache/*
 
+data/*
 
 *.db
 
