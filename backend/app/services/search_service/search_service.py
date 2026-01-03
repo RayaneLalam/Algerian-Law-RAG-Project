@@ -6,6 +6,13 @@ import numpy as np
 import faiss
 import pickle
 from sentence_transformers import SentenceTransformer
+
+# Clear GPU cache to avoid OOM errors
+try:
+    import torch
+    torch.cuda.empty_cache()
+except:
+    pass
 #from src.config.settings import DATA_PATH, VECTOR_DB_PATH, TOP_N_RESULTS
 DATA_PATH = "data/laws.json"
 VECTOR_DB_PATH = "data/laws.index"
@@ -32,9 +39,20 @@ class SearchService:
         if not os.path.exists(vector_db_dir):
             os.makedirs(vector_db_dir, exist_ok=True)
 
+        # Get compute device from environment
+        device = os.getenv('COMPUTE_DEVICE', 'cuda').lower()
+        if device not in ['cuda', 'cpu']:
+            device = 'cuda'
+        
         # Model and storage
         self.embedding_model_name = embedding_model
-        self.model = SentenceTransformer(self.embedding_model_name)
+        # Load model from cache only (no downloading)
+        try:
+            self.model = SentenceTransformer(self.embedding_model_name, local_files_only=True, device=device)
+        except (OSError, ValueError):
+            # If cache is empty, download once
+            logger.warning(f"Model not in cache, downloading: {self.embedding_model_name}")
+            self.model = SentenceTransformer(self.embedding_model_name, device=device)
 
         # In-memory state
         self.chunks = []                # list of dicts (documents)

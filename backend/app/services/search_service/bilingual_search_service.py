@@ -7,6 +7,13 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from typing import List, Dict, Optional
 
+# Clear GPU cache to avoid OOM errors
+try:
+    import torch
+    torch.cuda.empty_cache()
+except:
+    pass
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,28 +50,64 @@ class BilingualSearchService:
         self._load_indices()
     
     def _initialize_embedders(self):
-        """Initialize embedding models (lazy load)."""
+        """Initialize embedding models from cache (no downloading)."""
+        # Get compute device from environment
+        device = os.getenv('COMPUTE_DEVICE', 'cuda').lower()
+        if device not in ['cuda', 'cpu']:
+            device = 'cuda'
+        
         try:
-            logger.info("Initializing embedding models...")
-            self.french_embedder = SentenceTransformer(self.settings.FRENCH_EMBEDDING_MODEL)
-            logger.info(f"French embedder loaded: {self.settings.FRENCH_EMBEDDING_MODEL}")
+            import torch
+            if device == 'cuda':
+                torch.cuda.empty_cache()
+        except:
+            pass
+            
+        try:
+            logger.info(f"Initializing embedding models on {device}...")
+            # Load French embedder (CamemBERT - 1024 dims - matches FAISS index)
+            try:
+                self.french_embedder = SentenceTransformer(self.settings.FRENCH_EMBEDDING_MODEL, local_files_only=True, device=device)
+                logger.info(f"✓ French embedder loaded on {device}: {self.settings.FRENCH_EMBEDDING_MODEL}")
+            except Exception as e:
+                logger.error(f"Failed to load French embedder: {e}")
+                logger.warning("French embedder not available - search will use fallback")
+                self.french_embedder = None
         except Exception as e:
-            logger.warning(f"Failed to load French embedder: {e}")
+            logger.error(f"French embedder initialization error: {e}")
             self.french_embedder = None
         
         try:
-            self.arabic_embedder = SentenceTransformer(self.settings.ARABIC_EMBEDDING_MODEL)
-            logger.info(f"Arabic embedder loaded: {self.settings.ARABIC_EMBEDDING_MODEL}")
+            try:
+                import torch
+                if device == 'cuda':
+                    torch.cuda.empty_cache()
+            except:
+                pass
+            # Load Arabic embedder (Multilingual - 384 dims)
+            try:
+                self.arabic_embedder = SentenceTransformer(self.settings.ARABIC_EMBEDDING_MODEL, local_files_only=True, device=device)
+                logger.info(f"✓ Arabic embedder loaded on {device}: {self.settings.ARABIC_EMBEDDING_MODEL}")
+            except Exception as e:
+                logger.error(f"Failed to load Arabic embedder: {e}")
+                logger.warning("Arabic embedder not available - search will use fallback")
+                self.arabic_embedder = None
         except Exception as e:
-            logger.warning(f"Failed to load Arabic embedder: {e}")
+            logger.error(f"Arabic embedder initialization error: {e}")
             self.arabic_embedder = None
         
-        # Multilingual fallback
+        # Multilingual fallback (always load from cache)
         try:
-            self.multilingual_embedder = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
-            logger.info("Multilingual embedder loaded as fallback")
+            try:
+                import torch
+                if device == 'cuda':
+                    torch.cuda.empty_cache()
+            except:
+                pass
+            self.multilingual_embedder = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2', local_files_only=True, device=device)
+            logger.info(f"✓ Multilingual embedder loaded on {device} as fallback")
         except Exception as e:
-            logger.warning(f"Failed to load multilingual embedder: {e}")
+            logger.error(f"Failed to load multilingual embedder from cache: {e}")
             self.multilingual_embedder = None
     
     def _load_indices(self):

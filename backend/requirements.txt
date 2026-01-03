@@ -1,13 +1,38 @@
-flask==2.3.0
+# flask==2.3.0
+# flask-cors==4.0.0
+# sentence-transformers==3.0.1
+# torch==2.0.1
+# faiss-cpu==1.7.4
+# transformers
+# accelerate==0.28.0
+# bitsandbytes==0.41.0
+# pydantic==2.0.0
+# python-dotenv==1.0.0
+# openai>=1.3.0
+# pyyaml==6.0
+# requests==2.31.0
+# PyJWT==2.10.1
+# Werkzeug==2.3.0
+# numpy==1.26.4
+# typing-extensions==4.7.1
+flask==3.0.0
 flask-cors==4.0.0
-sentence-transformers==2.2.2
-torch==2.0.1
-faiss-cpu==1.7.4
-transformers==4.32.0
-accelerate==0.21.0
-bitsandbytes==0.41.0
-pydantic==2.0.0
-python-dotenv==1.0.0
+# Core AI Core - Bumped for Qwen2 & LRScheduler Fix
+torch==2.2.2
+torchvision==0.17.2
+torchaudio==2.2.2
+transformers==4.40.0
+sentence-transformers==3.0.1
+accelerate==0.29.3
+bitsandbytes==0.43.1
+# Utilities
+faiss-cpu==1.8.0
+pydantic==2.7.0
+python-dotenv==1.0.1
 openai>=1.3.0
-pyyaml==6.0
+pyyaml==6.0.1
 requests==2.31.0
+PyJWT==2.8.0
+Werkzeug==3.0.1
+numpy<2.0.0
+typing-extensions==4.11.0

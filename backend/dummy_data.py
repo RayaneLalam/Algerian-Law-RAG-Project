@@ -1,7 +1,11 @@
 import json
 import faiss
 import numpy as np
+import os
 from sentence_transformers import SentenceTransformer
+
+# Set up Hugging Face cache to use local models
+os.environ['HF_HOME'] = os.path.join(os.path.dirname(__file__), 'cache')
 
 # === 1. Dummy data of 20 Algerian national laws (in French) ===
 laws = [
@@ -148,7 +152,17 @@ laws = [
 ]
 
 # === 2. Vectorization using SentenceTransformer ===
-model = SentenceTransformer("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+# Try to load from cache first, then download if needed
+try:
+    model = SentenceTransformer(
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        local_files_only=True
+    )
+except (OSError, ValueError):
+    print("  Model not in cache, downloading...")
+    model = SentenceTransformer(
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    )
 
 # Combine title and text for embedding
 texts = [f"{law['titre']} - {law['texte']}" for law in laws]
@@ -166,5 +180,5 @@ faiss.write_index(index, "laws.index")
 with open("laws.json", "w", encoding="utf-8") as f:
     json.dump(laws, f, ensure_ascii=False, indent=4)
 
-print("✅ FAISS index saved to 'laws.index'")
-print("✅ Metadata and texts saved to 'laws.json'")
+print(" FAISS index saved to 'laws.index'")
+print(" Metadata and texts saved to 'laws.json'")

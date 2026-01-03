@@ -1,6 +1,7 @@
 from flask import current_app
 from . import chat_models
 from ..utils.prompt_utils import load_language_prompt_template, _format_context_from_results
+from ..services.llm_service.instance import get_llm_service
 import json
 import logging
 
@@ -8,8 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 def make_reply_stream(received_message: str, vectors_json_str: str, language: str = 'fr'):
-    """Generate streaming reply with language awareness."""
-    from ..services.llm_service.bilingual_llm_service import BilingualLLMService
+    """Generate streaming reply with language awareness using global LLM service."""
     
     try:
         results = json.loads(vectors_json_str) if vectors_json_str else []
@@ -27,7 +27,8 @@ def make_reply_stream(received_message: str, vectors_json_str: str, language: st
     except Exception:
         prompt = f"Question: {received_message}\n\nContext:\n{context_block}"
     
-    llm_service = BilingualLLMService()
+    # Use global singleton instance - no new instance creation
+    llm_service = get_llm_service()
     return llm_service.generate_completion(prompt, language=language, stream=True)
 
 

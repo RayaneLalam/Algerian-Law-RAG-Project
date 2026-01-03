@@ -1,9 +1,10 @@
-laws.index
+laws_ar.index
 laws.json
-laws.index.meta
+laws_ar.index.meta
 config/*
 dummydata/*
 app/config/*
+cache/*
 
 
 *.db

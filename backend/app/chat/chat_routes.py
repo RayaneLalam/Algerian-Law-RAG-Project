@@ -11,9 +11,23 @@ from ..services.search_service.bilingual_search_service import BilingualSearchSe
 
 logger = logging.getLogger(__name__)
 
-# Instantiate services
-language_service = LanguageService()
-search_service = BilingualSearchService()
+# Global service instances (lazy loaded)
+_language_service = None
+_search_service = None
+
+def get_language_service():
+    """Get or create the singleton language service."""
+    global _language_service
+    if _language_service is None:
+        _language_service = LanguageService()
+    return _language_service
+
+def get_search_service():
+    """Get or create the singleton search service."""
+    global _search_service
+    if _search_service is None:
+        _search_service = BilingualSearchService()
+    return _search_service
 
 
 @chat_bp.route("/chat_stream_demo", methods=["POST"])
@@ -33,16 +47,18 @@ def chat_stream_demo():
 
     try:
         # Detect or normalize language
+        lang_service = get_language_service()
         if language == 'auto':
-            language = language_service.detect_response_language(message)
+            language = lang_service.detect_response_language(message)
         else:
-            language = language_service.normalize_language(language)
+            language = lang_service.normalize_language(language)
         
         logger.info(f"[DEMO] Processing query in language: {language}")
         
         # Search documents in appropriate language
         top_k = 3
-        results = search_service.search(message, language=language, top_k=top_k)
+        srch_service = get_search_service()
+        results = srch_service.search(message, language=language, top_k=top_k)
         vectors_json_str = json.dumps(results, ensure_ascii=False)
 
         # Return SSE response from bilingual service (demo - no DB save)
@@ -93,10 +109,11 @@ def chat_stream():
 
     try:
         # Detect or normalize language
+        lang_service = get_language_service()
         if language == 'auto':
-            language = language_service.detect_response_language(message)
+            language = lang_service.detect_response_language(message)
         else:
-            language = language_service.normalize_language(language)
+            language = lang_service.normalize_language(language)
         
         logger.info(f"Processing query in language: {language}")
         
@@ -118,7 +135,8 @@ def chat_stream():
 
         # Search documents in appropriate language
         top_k = 3
-        results = search_service.search(message, language=language, top_k=top_k)
+        srch_service = get_search_service()
+        results = srch_service.search(message, language=language, top_k=top_k)
         vectors_json_str = json.dumps(results, ensure_ascii=False)
 
         # Return SSE response from bilingual service

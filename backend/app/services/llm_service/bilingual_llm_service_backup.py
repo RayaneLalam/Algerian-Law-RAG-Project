@@ -103,126 +103,104 @@ class BilingualLLMService:
         language = language.lower().strip()
         return 'ar' if language in ('ar', 'arabic', 'العربية') else 'fr'
     
+    def _create_bad_words_filter(self, tokenizer, language='ar'):
+        """
+        Create a list of token IDs for Chinese/Japanese characters to block during generation.
+        """
+        import re
+        bad_words_ids = []
+        
+        try:
+            # Get vocabulary from tokenizer
+            vocab = tokenizer.get_vocab()
+            
+            # Find tokens that contain Chinese/Japanese characters
+            for token, token_id in vocab.items():
+                # Check if token contains Chinese/Japanese characters
+                if re.search(r'[\u4e00-\u9fff\u3040-\u309f]', str(token)):
+                    bad_words_ids.append([token_id])  # Each bad word should be a list
+                    
+            logger.info(f"[{language}] Blocking {len(bad_words_ids)} Chinese/Japanese tokens")
+            return bad_words_ids if bad_words_ids else None
+            
+        except Exception as e:
+            logger.warning(f"[{language}] Could not create bad words filter: {e}")
+            return None
+    
     def _clean_llm_response(self, response: str, language: str = 'fr') -> str:
         """
-        Robust post-processing to handle hallucination and ensure proper citation parsing.
-        
-        Instead of just counting characters, this implements sophisticated logic:
-        - Discards responses with >20% non-target language characters
-        - Preserves citations like [Article 50] correctly
-        - Returns fallback message for invalid responses
+        Clean LLM response by extracting answer and sources sections.
+        Removes template text that shouldn't be in the output.
+        Handles hallucination in other languages.
         """
-        if not response or not response.strip():
-            return "Unable to generate a valid response from context."
+        import re
         
-        response = response.strip()
+        # Check for hallucination in Chinese/Japanese - STRICTER THRESHOLD
+        chinese_chars = len(re.findall(r'[\u4e00-\u9fff\u3040-\u309f]', response))
+        if chinese_chars > 2:  # ANY Chinese characters beyond 2 = immediate warning
+            logger.warning(f"[{language}] Detected hallucination: {chinese_chars} Chinese/Japanese characters")
+            return "Warning: Model generated response in unsupported language."
         
-        # Count different types of characters
-        total_chars = len([c for c in response if c.isalpha()])
-        if total_chars == 0:
-            return "Unable to generate a valid response from context."
-        
-        if language == 'ar':
-            # Count Arabic characters
-            target_chars = len(re.findall(r'[\u0600-\u06FF]', response))
-            # Count non-Arabic alphabetic characters (excluding citations and punctuation)
-            non_target_chars = len(re.findall(r'[a-zA-Z\u4e00-\u9fff\u3040-\u309f]', response))
-        else:
-            # Count French/Latin characters
-            target_chars = len(re.findall(r'[a-zA-ZàâäôöéèêëçùûüîïñÀÂÄÔÖÉÈÊËÇÙÛÜÎÏÑ]', response))
-            # Count non-Latin alphabetic characters (Chinese, Arabic, etc.)
-            non_target_chars = len(re.findall(r'[\u4e00-\u9fff\u3040-\u309f\u0600-\u06FF]', response))
-        
-        # Check if >20% non-target language
-        non_target_ratio = non_target_chars / total_chars if total_chars > 0 else 0
-        
-        if non_target_ratio > 0.20:
-            logger.warning(f"[{language}] Response contains {non_target_ratio:.1%} non-target language characters. Discarding.")
-            return "Unable to generate a valid response from context."
-        
-        # Extract and preserve sections with citations
+        # Extract sections
         answer_text = ""
         sources_text = ""
         
-        # Parse response format based on language
-        if language == 'ar':
-            # Look for [الإجابة] section
-            if "[الإجابة]" in response:
-                parts = response.split("[الإجابة]")
-                if len(parts) > 1:
-                    answer_part = parts[-1]
-                    if "[المصادر]" in answer_part:
-                        answer_text = answer_part.split("[المصادر]")[0].strip()
-                        sources_text = answer_part.split("[المصادر]")[-1].strip()
-                    else:
-                        answer_text = answer_part.strip()
-            else:
-                # Fallback: take full response but clean format markers
-                answer_text = response.replace("[الإجابة]", "").replace("[المصادر]", "").strip()
+        # Try to extract [الإجابة] or [RÉPONSE] section
+        if "[الإجابة]" in response:
+            parts = response.split("[الإجابة]")
+            if len(parts) > 1:
+                answer_part = parts[-1]
+                if "[المصادر]" in answer_part:
+                    answer_text = answer_part.split("[المصادر]")[0].strip()
+                    sources_text = answer_part.split("[المصادر]")[-1].strip()
+                else:
+                    answer_text = answer_part.strip()
+        elif "[RÉPONSE]" in response:
+            parts = response.split("[RÉPONSE]")
+            if len(parts) > 1:
+                answer_part = parts[-1]
+                if "[SOURCES]" in answer_part:
+                    answer_text = answer_part.split("[SOURCES]")[0].strip()
+                    sources_text = answer_part.split("[SOURCES]")[-1].strip()
+                else:
+                    answer_text = answer_part.strip()
         else:
-            # Look for [RÉPONSE] section  
-            if "[RÉPONSE]" in response:
-                parts = response.split("[RÉPONSE]")
-                if len(parts) > 1:
-                    answer_part = parts[-1]
-                    if "[SOURCES]" in answer_part:
-                        answer_text = answer_part.split("[SOURCES]")[0].strip()
-                        sources_text = answer_part.split("[SOURCES]")[-1].strip()
-                    else:
-                        answer_text = answer_part.strip()
-            else:
-                # Fallback: take full response but clean format markers
-                answer_text = response.replace("[RÉPONSE]", "").replace("[SOURCES]", "").strip()
+            # Fallback: just clean template markers
+            answer_text = response.replace("[الإجابة]", "").replace("[المصادر]", "").replace("[RÉPONSE]", "").replace("[SOURCES]", "").strip()
         
-        # Preserve citations correctly - don't cut them off
-        # Citations like [Article 50], [المادة 15] should be preserved
-        citation_pattern = r'\[[^\]]{1,50}\]'  # Match [content] with reasonable length limit
-        citations = re.findall(citation_pattern, answer_text)
-        
-        # Clean and limit answer length while preserving citations
-        sentences = []
+        # Limit answer to 4 sentences max
         if language == 'ar':
-            # Split on Arabic sentence endings, preserve citations
-            parts = re.split(r'[.!?؟]', answer_text)
+            # Split on Arabic sentence endings
+            sentences = [s.strip() for s in re.split(r'[.!?؟!،]', answer_text) if s.strip()]
         else:
-            # Split on French sentence endings, preserve citations  
-            parts = re.split(r'[.!?]', answer_text)
+            # Split on French sentence endings
+            sentences = [s.strip() for s in re.split(r'[.!?]', answer_text) if s.strip()]
         
-        # Take first 3 meaningful sentences
-        sentence_count = 0
-        for part in parts:
-            if part.strip() and sentence_count < 3:
-                sentences.append(part.strip())
-                sentence_count += 1
+        # Take only first 4 sentences
+        answer_text = ". ".join(sentences[:4])
+        if answer_text and not answer_text.endswith(('.', '!', '?', '؟')):
+            answer_text += "."
         
-        # Reconstruct answer with proper punctuation
-        if sentences:
-            answer_text = '. '.join(sentences)
-            if not answer_text.endswith(('.', '!', '?', '؟')):
-                answer_text += '.'
-        
-        # Clean up sources section
+        # Deduplicate sources - remove repetitions
         if sources_text:
             source_lines = [line.strip() for line in sources_text.split('\n') if line.strip()]
             # Remove duplicates while preserving order
             seen = set()
             unique_sources = []
             for line in source_lines:
-                # Normalize for duplicate detection
-                normalized = re.sub(r'^\d+\.\s*', '', line.strip())
-                if normalized and normalized not in seen:
+                if line not in seen:
                     unique_sources.append(line)
-                    seen.add(normalized)
-            sources_text = '\n'.join(unique_sources[:5])  # Max 5 sources
+                    seen.add(line)
+            sources_text = "\n".join(unique_sources[:10])  # Max 10 sources
         
-        # Combine final response
+        # Combine cleaned response
         if sources_text:
             if language == 'ar':
                 return f"{answer_text}\n\n[المصادر]\n{sources_text}"
             else:
                 return f"{answer_text}\n\n[SOURCES]\n{sources_text}"
         else:
-            return answer_text if answer_text else "Unable to generate a valid response from context."
+            return answer_text
     
     def _load_french_llm(self):
         """Load French LLM (Vigogne-2-7B) with lazy loading."""
@@ -373,14 +351,7 @@ class BilingualLLMService:
             self.arabic_llm = None
     
     def _generate_french_local(self, prompt: str, stream: bool = False) -> Generator[str, None, None]:
-        """
-        Generate French response using local Vigogne model.
-        
-        REFACTORED with strict factual mode:
-        - temperature=0.1 (strict factual mode)
-        - repetition_penalty=1.1 (balanced grammar preservation)
-        - stop_strings for proper termination
-        """
+        """Generate French response using local Vigogne model with real-time streaming."""
         self._load_french_llm()
         
         if self.french_llm is None:
@@ -393,9 +364,6 @@ class BilingualLLMService:
             if self.device == 'cuda' and torch.cuda.is_available():
                 inputs = {k: v.to("cuda") for k, v in inputs.items()}
             
-            # Define stop strings for proper termination
-            stop_strings = ["</s>", "[END]", "---", "\n\nQuestion:", "\n\nQUESTION:"]
-            
             if stream:
                 # Use TextIteratorStreamer for real-time token streaming
                 streamer = TextIteratorStreamer(
@@ -404,60 +372,102 @@ class BilingualLLMService:
                     skip_prompt=True
                 )
                 
-                # Run generation in a separate thread with STRICT PARAMETERS
+                # Create bad words filter to block Chinese tokens
+                bad_words_ids = self._create_bad_words_filter(self.french_tokenizer, 'fr')
+                
+                # Run generation in a separate thread with stricter parameters
+                generation_kwargs = {
+                    **inputs,
+                    "max_new_tokens": 150,  # Stricter limit
+                    "temperature": 0.1,     # Very low temperature
+                    "top_p": 0.8,          # More restrictive
+                    "do_sample": True,
+                    "pad_token_id": self.french_tokenizer.eos_token_id,
+                    "eos_token_id": self.french_tokenizer.eos_token_id,
+                    "repetition_penalty": 2.0,  # Higher penalty
+                    "no_repeat_ngram_size": 4,  # Stricter n-gram
+                    "streamer": streamer
+                }
+                
+                # Add bad words filter if available
+                if bad_words_ids:
+                    generation_kwargs["bad_words_ids"] = bad_words_ids
+                
                 generation_thread = threading.Thread(
                     target=self.french_llm.generate,
-                    kwargs={
-                        **inputs,
-                        "max_new_tokens": 200,
-                        "temperature": 0.1,        # STRICT factual mode
-                        "top_p": 0.9,
-                        "do_sample": True,
-                        "pad_token_id": self.french_tokenizer.eos_token_id,
-                        "eos_token_id": self.french_tokenizer.eos_token_id,
-                        "repetition_penalty": 1.1,  # Balanced grammar preservation
-                        "no_repeat_ngram_size": 3,
-                        "streamer": streamer
-                    }
+                    kwargs=generation_kwargs
                 )
                 generation_thread.start()
                 
-                # Collect response for post-processing
+                # Collect streamed tokens and apply cleaning
                 collected_response = ""
+                chinese_detected = False
+                token_count = 0
+                
                 for token in streamer:
                     if token:
-                        # Check for stop strings
-                        if any(stop_str in token for stop_str in stop_strings):
-                            break
+                        token_count += 1
+                        # Early detection of Chinese characters
+                        import re
+                        if not chinese_detected:
+                            chinese_in_token = len(re.findall(r'[\u4e00-\u9fff\u3040-\u309f]', token))
+                            if chinese_in_token > 0:
+                                chinese_detected = True
+                                logger.warning(f"[French] Early Chinese character detection in token {token_count}")
+                                yield " Warning: Model generated response in unsupported language."
+                                break
+                        
                         collected_response += token
+                        # Stop if response gets too long (safety check)
+                        if len(collected_response) > 2000:  # Character limit
+                            logger.warning(f"[French] Response too long, stopping generation")
+                            break
+                        
+                        logger.debug(f"[French] Yielding token: {token[:50]}")
                         yield token
                 
                 generation_thread.join()
+                
+                # If no Chinese was detected during streaming, still clean the final response
+                if not chinese_detected and collected_response:
+                    cleaned_response = self._clean_llm_response(collected_response, language='fr')
+                    # If cleaning detected issues, send a warning as the final token
+                    if "Warning" in cleaned_response:
+                        yield "\n[Cleaned] Response contained unsupported content."
+                
                 logger.info("French generation completed")
             else:
-                # Non-streaming mode with STRICT PARAMETERS
+                # Non-streaming mode with stricter parameters
                 with torch.no_grad():
-                    outputs = self.french_llm.generate(
+                    # Create bad words filter
+                    bad_words_ids = self._create_bad_words_filter(self.french_tokenizer, 'fr')
+                    
+                    generation_kwargs = {
                         **inputs,
-                        max_new_tokens=200,
-                        temperature=0.1,        # STRICT factual mode
-                        top_p=0.9,
-                        do_sample=True,
-                        pad_token_id=self.french_tokenizer.eos_token_id,
-                        eos_token_id=self.french_tokenizer.eos_token_id,
-                        repetition_penalty=1.1,  # Balanced grammar preservation
-                        no_repeat_ngram_size=3
-                    )
+                        "max_new_tokens": 150,     # Stricter limit
+                        "temperature": 0.1,        # Very low temperature
+                        "top_p": 0.8,             # More restrictive
+                        "do_sample": True,
+                        "pad_token_id": self.french_tokenizer.eos_token_id,
+                        "eos_token_id": self.french_tokenizer.eos_token_id,
+                        "repetition_penalty": 2.0,  # Higher penalty
+                        "no_repeat_ngram_size": 4   # Stricter n-gram
+                    }
+                    
+                    # Add bad words filter if available
+                    if bad_words_ids:
+                        generation_kwargs["bad_words_ids"] = bad_words_ids
+                    
+                    outputs = self.french_llm.generate(**generation_kwargs)
                 
                 response = self.french_tokenizer.decode(outputs[0], skip_special_tokens=True)
                 
-                # Clean response
                 if "<|assistant|>:" in response:
                     response = response.split("<|assistant|>:")[-1].strip()
                 else:
                     response = response[len(prompt):].strip()
                 
-                # Apply robust post-processing
+                # Clean output: extract answer and sources
                 response = self._clean_llm_response(response, language='fr')
                 
                 yield response
@@ -467,14 +477,7 @@ class BilingualLLMService:
             yield f"Error generating French response: {str(e)}"
     
     def _generate_arabic_local(self, prompt: str, stream: bool = False) -> Generator[str, None, None]:
-        """
-        Generate Arabic response using local Qwen model.
-        
-        REFACTORED with strict factual mode:
-        - temperature=0.1 (strict factual mode)
-        - repetition_penalty=1.1 (balanced grammar preservation)
-        - stop_strings for proper termination
-        """
+        """Generate Arabic response using local Qwen model with real-time streaming."""
         self._load_arabic_llm()
         
         if self.arabic_llm is None:
@@ -487,9 +490,6 @@ class BilingualLLMService:
             if self.device == 'cuda' and torch.cuda.is_available():
                 inputs = {k: v.to("cuda") for k, v in inputs.items()}
             
-            # Define stop strings for proper termination
-            stop_strings = ["</s>", "[END]", "---", "\n\nسؤال:", "\n\nالسؤال:"]
-            
             if stream:
                 # Use TextIteratorStreamer for real-time token streaming
                 streamer = TextIteratorStreamer(
@@ -498,55 +498,98 @@ class BilingualLLMService:
                     skip_prompt=True
                 )
                 
-                # Run generation in a separate thread with STRICT PARAMETERS
+                # Create bad words filter to block Chinese tokens
+                bad_words_ids = self._create_bad_words_filter(self.arabic_tokenizer, 'ar')
+                
+                # Run generation in a separate thread with stricter parameters
+                generation_kwargs = {
+                    **inputs,
+                    "max_new_tokens": 150,  # Even stricter limit
+                    "temperature": 0.1,     # Very low temperature
+                    "top_p": 0.8,          # More restrictive
+                    "do_sample": True,
+                    "pad_token_id": self.arabic_tokenizer.eos_token_id,
+                    "eos_token_id": self.arabic_tokenizer.eos_token_id,
+                    "repetition_penalty": 2.0,  # Higher penalty
+                    "no_repeat_ngram_size": 4,  # Stricter n-gram
+                    "streamer": streamer
+                }
+                
+                # Add bad words filter if available
+                if bad_words_ids:
+                    generation_kwargs["bad_words_ids"] = bad_words_ids
+                
                 generation_thread = threading.Thread(
                     target=self.arabic_llm.generate,
-                    kwargs={
-                        **inputs,
-                        "max_new_tokens": 200,
-                        "temperature": 0.1,        # STRICT factual mode
-                        "top_p": 0.9,
-                        "do_sample": True,
-                        "pad_token_id": self.arabic_tokenizer.eos_token_id,
-                        "eos_token_id": self.arabic_tokenizer.eos_token_id,
-                        "repetition_penalty": 1.1,  # Balanced grammar preservation
-                        "no_repeat_ngram_size": 3,
-                        "streamer": streamer
-                    }
+                    kwargs=generation_kwargs
                 )
                 generation_thread.start()
                 
-                # Collect response for post-processing
+                # Collect streamed tokens and clean final response
                 collected_response = ""
+                chinese_detected = False
+                token_count = 0
+                
                 for token in streamer:
                     if token:
-                        # Check for stop strings
-                        if any(stop_str in token for stop_str in stop_strings):
-                            break
+                        token_count += 1
+                        # Early detection of Chinese characters
+                        import re
+                        if not chinese_detected:
+                            chinese_in_token = len(re.findall(r'[\u4e00-\u9fff\u3040-\u309f]', token))
+                            if chinese_in_token > 0:
+                                chinese_detected = True
+                                logger.warning(f"[Arabic] Early Chinese character detection in token {token_count}")
+                                yield "⚠️ Warning: Model generated response in unsupported language."
+                                break
+                        
                         collected_response += token
+                        # Stop if response gets too long (safety check)
+                        if len(collected_response) > 2000:  # Character limit
+                            logger.warning(f"[Arabic] Response too long, stopping generation")
+                            break
+                        
+                        logger.debug(f"[Arabic] Yielding token: {token[:50]}")
                         yield token
                 
                 generation_thread.join()
+                
+                # If no Chinese was detected during streaming, still clean the final response
+                if not chinese_detected and collected_response:
+                    cleaned_response = self._clean_llm_response(collected_response, language='ar')
+                    # If cleaning detected issues, send a warning as the final token
+                    if " Warning" in cleaned_response:
+                        yield "\n [Cleaned] Response contained unsupported content."
+                
                 logger.info("Arabic generation completed")
             else:
-                # Non-streaming mode with STRICT PARAMETERS
+                # Non-streaming mode with stricter parameters
                 with torch.no_grad():
-                    outputs = self.arabic_llm.generate(
+                    # Create bad words filter
+                    bad_words_ids = self._create_bad_words_filter(self.arabic_tokenizer, 'ar')
+                    
+                    generation_kwargs = {
                         **inputs,
-                        max_new_tokens=200,
-                        temperature=0.1,        # STRICT factual mode
-                        top_p=0.9,
-                        do_sample=True,
-                        pad_token_id=self.arabic_tokenizer.eos_token_id,
-                        eos_token_id=self.arabic_tokenizer.eos_token_id,
-                        repetition_penalty=1.1,  # Balanced grammar preservation
-                        no_repeat_ngram_size=3
-                    )
+                        "max_new_tokens": 150,     # Even stricter limit
+                        "temperature": 0.1,        # Very low temperature
+                        "top_p": 0.8,             # More restrictive
+                        "do_sample": True,
+                        "pad_token_id": self.arabic_tokenizer.eos_token_id,
+                        "eos_token_id": self.arabic_tokenizer.eos_token_id,
+                        "repetition_penalty": 2.0,  # Higher penalty
+                        "no_repeat_ngram_size": 4   # Stricter n-gram
+                    }
+                    
+                    # Add bad words filter if available
+                    if bad_words_ids:
+                        generation_kwargs["bad_words_ids"] = bad_words_ids
+                    
+                    outputs = self.arabic_llm.generate(**generation_kwargs)
                 
                 response = self.arabic_tokenizer.decode(outputs[0], skip_special_tokens=True)
                 response = response.split("Answer (in Arabic, comprehensive):")[-1].strip() if "Answer (in Arabic, comprehensive):" in response else response[len(prompt):].strip()
                 
-                # Apply robust post-processing
+                # Clean output: extract answer and sources
                 response = self._clean_llm_response(response, language='ar')
                 
                 yield response
@@ -561,39 +604,53 @@ class BilingualLLMService:
         language: str = 'fr',
         stream: bool = False
     ) -> Generator[str, None, None]:
-        """Generate response using OpenRouter API with same strict parameters."""
+        """Generate response using OpenRouter API."""
         if not self.api_client:
             logger.warning("API client not configured. Please set OPENROUTER_API_KEY.")
             yield "API client not configured"
             return
         
         try:
-            # Use same strict parameters as local models
+            # Use same restrictions as local models - STRICTER
+            max_tokens = 150  # Even more restrictive
+            temperature = 0.1  # Very low temperature
+            
             response = self.api_client.chat.completions.create(
                 model=self.settings.DEFAULT_LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 stream=stream,
-                temperature=0.1,    # STRICT factual mode
-                max_tokens=200
+                temperature=temperature,
+                max_tokens=max_tokens
             )
             
             if stream:
                 collected_response = ""
+                chinese_detected = False
+                
                 for chunk in response:
                     if hasattr(chunk.choices[0].delta, 'content') and chunk.choices[0].delta.content:
                         token = chunk.choices[0].delta.content
-                        collected_response += token
-                        yield token
                         
-                # Apply post-processing to collected response
-                if collected_response:
-                    cleaned = self._clean_llm_response(collected_response, language)
-                    if cleaned != collected_response:
-                        yield f"\n[Processed: {cleaned}]"
+                        # Early Chinese detection in API streaming
+                        import re
+                        if not chinese_detected:
+                            chinese_in_token = len(re.findall(r'[\u4e00-\u9fff\u3040-\u309f]', token))
+                            if chinese_in_token > 0:
+                                chinese_detected = True
+                                logger.warning(f"[API-{language}] Chinese character detection in API response")
+                                yield " Warning: API model generated response in unsupported language."
+                                return
+                        
+                        collected_response += token
+                        if len(collected_response) > 2000:
+                            logger.warning(f"[API-{language}] API response too long, stopping")
+                            break
+                            
+                        yield token
             else:
                 if hasattr(response.choices[0].message, 'content'):
                     api_response = response.choices[0].message.content
-                    # Apply robust post-processing
+                    # Clean API response too
                     cleaned_response = self._clean_llm_response(api_response, language)
                     yield cleaned_response
                 else:
