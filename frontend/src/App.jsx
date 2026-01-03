@@ -9,10 +9,12 @@ import { MdOutlineArrowLeft, MdOutlineArrowRight } from "react-icons/md";
 import { apiClient } from "./services/apiClient";
 import { AuthScreen } from "./components/AuthScreen";
 import { HiOutlineMenuAlt2 } from "react-icons/hi";
+import { useToast } from "./components/Toast";
 
 export const App = () => {
   const { language, theme } = useLanguageTheme();
   const { isAuthenticated, isLoading: authLoading, token } = useAuth();
+  const { showToast, ToastContainer } = useToast();
   const isArabic = language === "ar";
   const isDark = theme === "dark";
 
@@ -57,6 +59,12 @@ export const App = () => {
 
   const fetchConversationMessages = async (conversationId) => {
     try {
+      // Validate conversation ID
+      if (!conversationId || isNaN(conversationId) || conversationId <= 0) {
+        console.error("Invalid conversation ID for fetching messages:", conversationId);
+        return [];
+      }
+
       const response = await fetch(
         `http://localhost:5000/conversations/${conversationId}/messages`,
         {
@@ -74,11 +82,11 @@ export const App = () => {
         }));
         return formattedMessages;
       } else {
-        console.error("Failed to fetch messages");
+        console.error(`Failed to fetch messages for conversation ${conversationId}:`, response.status);
         return [];
       }
     } catch (error) {
-      console.error("Error fetching messages:", error);
+      console.error("Error fetching conversation messages:", error);
       return [];
     }
   };
@@ -101,7 +109,7 @@ export const App = () => {
     }
   };
 
-    const handleSendMessage = async (text, queryLanguage = "auto") => {
+  const handleSendMessage = async (text, queryLanguage = "auto") => {
     if (!text.trim() || isLoading) return;
 
     setIsInputCentered(false);
@@ -138,72 +146,101 @@ export const App = () => {
       );
     }
 
-    try {
-      // Get JWT token from localStorage
-      const token = localStorage.getItem("authToken") || "";
-
-      // Call the actual API
-      const response = await apiClient.chatStream(
-        userMessage,
-        currentConversationId,
-        queryLanguage,
-        token
-      );
-
-      // Handle streaming response
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let displayedText = "";
-
+    const attemptApiCall = async (conversationId, isRetry = false) => {
       try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        // Call the actual authenticated API
+        const response = await apiClient.chatStream(
+          userMessage,
+          conversationId,
+          queryLanguage,
+          token,
+          isRetry
+        );
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split("\n");
+        // Handle streaming response
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let displayedText = "";
 
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.chunk) {
-                  displayedText += data.chunk;
-                  setMessages((prev) => {
-                    const updated = [...prev];
-                    updated[updated.length - 1] = {
-                      ...updated[updated.length - 1],
-                      content: displayedText,
-                    };
-                    return updated;
-                  });
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split("\n");
+
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  if (data.chunk) {
+                    displayedText += data.chunk;
+                    setMessages((prev) => {
+                      const updated = [...prev];
+                      updated[updated.length - 1] = {
+                        ...updated[updated.length - 1],
+                        content: displayedText,
+                      };
+                      return updated;
+                    });
+                  }
+                } catch (e) {
+                  // Ignore JSON parse errors
                 }
-              } catch (e) {
-                // Ignore JSON parse errors
               }
             }
           }
+        } finally {
+          reader.releaseLock();
         }
-      } finally {
-        reader.releaseLock();
-      }
 
-      // Update conversation with final message
-      if (currentConversationId) {
-        setConversations((prev) =>
-          prev.map((conv) =>
-            conv.id === currentConversationId
-              ? {
-                  ...conv,
-                  messages: [
-                    ...updatedMessages.slice(0, -1),
-                    { role: "assistant", content: displayedText, language: queryLanguage },
-                  ],
-                }
-              : conv
-          )
-        );
+        // Update conversation with final message
+        if (currentConversationId) {
+          setConversations((prev) =>
+            prev.map((conv) =>
+              conv.id === currentConversationId
+                ? {
+                    ...conv,
+                    messages: [
+                      ...updatedMessages.slice(0, -1),
+                      { role: "assistant", content: displayedText, language: queryLanguage },
+                    ],
+                  }
+                : conv
+            )
+          );
+        }
+
+        return { success: true };
+
+      } catch (error) {
+        // Handle 404 error (conversation not found)
+        if (error.status === 404 && !error.isRetry && conversationId) {
+          console.log("Conversation not found (404), clearing invalid ID and retrying...");
+          
+          // Clear the invalid conversation ID
+          setCurrentConversationId(null);
+          
+          // Remove from localStorage if stored there
+          if (localStorage.getItem('currentConversationId')) {
+            localStorage.removeItem('currentConversationId');
+          }
+          
+          // Show notification
+          showToast("Previous conversation not found. Starting a new one.", "warning", 4000);
+          
+          // Retry the request without conversation ID
+          return await attemptApiCall(null, true);
+        }
+        
+        // For other errors or if it's already a retry, throw the error
+        throw error;
       }
+    };
+
+    try {
+      await attemptApiCall(currentConversationId);
     } catch (error) {
       console.error("Error calling API:", error);
       const errorMessage = error.message || "Error communicating with server";
@@ -228,16 +265,25 @@ export const App = () => {
   // };
 
   const handleSelectConversation = async (id) => {
-    const conversationId = parseInt(id);
-    setCurrentConversationId(conversationId);
-    setIsInputCentered(false);
+    try {
+      // Ensure we have a valid ID
+      const conversationId = parseInt(id);
+      if (isNaN(conversationId) || conversationId <= 0) {
+        console.error("Invalid conversation ID:", id);
+        return;
+      }
+      
+      setCurrentConversationId(conversationId);
+      setIsInputCentered(false);
 
-    const conversationMessages =
-      await fetchConversationMessages(conversationId);
-    setMessages(conversationMessages);
+      const conversationMessages = await fetchConversationMessages(conversationId);
+      setMessages(conversationMessages);
 
-    if (window.innerWidth <= 640) {
-      setIsShowSidebar(false);
+      if (window.innerWidth <= 640) {
+        setIsShowSidebar(false);
+      }
+    } catch (error) {
+      console.error("Error selecting conversation:", error);
     }
   };
 
@@ -477,7 +523,9 @@ export const App = () => {
           style={{
             position: "absolute",
             top: "16px",
-            [isArabic ? "right" : "left"]: "16px",
+            [isArabic ? "right" : "left"]: isShowSidebar 
+              ? (window.innerWidth > 640 ? "272px" : "16px")
+              : "16px",
             zIndex: 20,
             padding: "8px",
             backgroundColor: isDark
@@ -486,7 +534,7 @@ export const App = () => {
             borderRadius: "8px",
             border: "none",
             cursor: "pointer",
-            transition: "background-color 0.2s",
+            transition: "all 0.3s ease",
           }}
         >
           {isShowSidebar ? (
@@ -514,6 +562,9 @@ export const App = () => {
           isCentered={isInputCentered && messages.length === 0}
         />
       </div>
+      
+      {/* Toast notifications */}
+      <ToastContainer />
     </div>
   );
 };

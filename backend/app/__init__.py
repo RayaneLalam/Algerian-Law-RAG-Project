@@ -5,6 +5,10 @@ import logging
 from database import db_setup
 from app.config.settings import settings
 from app.evaluation.api import evaluation_bp
+# Register blueprints
+from .chat.chat_routes import chat_bp, get_language_service, get_search_service
+from .auth import bp as auth_bp
+from flask_cors import CORS
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +31,6 @@ def create_app():
     app.config['JWT_ACCESS_TOKEN_EXPIRES'] = settings.JWT_ACCESS_TOKEN_EXPIRES
     app.config['DATABASE'] = settings.DATABASE
     app.config['JSON_AS_ASCII'] = settings.JSON_AS_ASCII
-
-    # Register blueprints
-    from .chat.chat_routes import chat_bp, get_language_service, get_search_service
-    from .auth import bp as auth_bp
-    from flask_cors import CORS
-
-    CORS(app, origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"], supports_credentials=True, expose_headers=["Content-Type"])
 
 
     app.register_blueprint(chat_bp)

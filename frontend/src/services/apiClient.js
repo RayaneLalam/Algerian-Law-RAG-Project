@@ -1,7 +1,7 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 export const apiClient = {
-  async chatStream(message, conversationId = null, language = "auto", token) {
+  async chatStream(message, conversationId = null, language = "auto", token, isRetry = false) {
     const payload = {
       message,
       conversation_id: conversationId,
@@ -21,7 +21,11 @@ export const apiClient = {
     });
 
     if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
+      // Create a custom error that includes response status and retry information
+      const error = new Error(`API error: ${response.status}`);
+      error.status = response.status;
+      error.isRetry = isRetry;
+      throw error;
     }
 
     return response;
