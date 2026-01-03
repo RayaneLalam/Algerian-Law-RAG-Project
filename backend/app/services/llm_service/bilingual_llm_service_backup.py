@@ -171,7 +171,7 @@ class BilingualLLMService:
         # Limit answer to 4 sentences max
         if language == 'ar':
             # Split on Arabic sentence endings
-            sentences = [s.strip() for s in re.split(r'[.!?؟!،]', answer_text) if s.strip()]
+            sentences = [s.strip() for s in re.split(r'[.!?؟،]', answer_text) if s.strip()]
         else:
             # Split on French sentence endings
             sentences = [s.strip() for s in re.split(r'[.!?]', answer_text) if s.strip()]
