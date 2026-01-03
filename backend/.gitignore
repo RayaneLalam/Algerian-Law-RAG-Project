@@ -8,3 +8,14 @@ cache/*
 
 
 *.db
+
+# Python cache (CRITICAL)
+__pycache__/
+*.pyc
+
+# VS Code
+.vscode/
+
+# Data / embeddings
+data/
+*.faiss
