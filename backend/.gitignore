@@ -1,10 +1,22 @@
-laws.index
+laws_ar.index
 laws.json
-laws.index.meta
+laws_ar.index.meta
 config/*
 dummydata/*
 app/config/*
+cache/*
 
 data/*
 
 *.db
+
+# Python cache (CRITICAL)
+__pycache__/
+*.pyc
+
+# VS Code
+.vscode/
+
+# Data / embeddings
+data/
+*.faiss

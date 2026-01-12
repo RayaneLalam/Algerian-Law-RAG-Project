@@ -5,15 +5,16 @@ import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
 
-# Configuration - Update these paths to match your files
-DATA_DIR = "C:/Konan.ai/Website/Algerian-Law-RAG-Project/data"
-INDEX_BASE_NAME = "algerian_legal(jo+constitution+penale+civil+commerce+famille) embedder_ dangvantuan-sentence-camembert-large"
-FAISS_INDEX_PATH = os.path.join(DATA_DIR, f"{INDEX_BASE_NAME}.faiss")
-DOCS_JSON_PATH = os.path.join(DATA_DIR, f"{INDEX_BASE_NAME}_docs.json")
-META_JSON_PATH = os.path.join(DATA_DIR, f"{INDEX_BASE_NAME}_meta.json")
-
-TOP_N_RESULTS = 5
-
+# Clear GPU cache to avoid OOM errors
+try:
+    import torch
+    torch.cuda.empty_cache()
+except:
+    pass
+#from src.config.settings import DATA_PATH, VECTOR_DB_PATH, TOP_N_RESULTS
+DATA_PATH = "data/laws.json"
+VECTOR_DB_PATH = "data/laws.index"
+TOP_N_RESULTS = 3
 # Configure logging
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -27,11 +28,30 @@ class SearchService:
     """
 
     def __init__(self,
-                 embedding_model: str = "dangvantuan/sentence-camembert-large"):
+                 embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"):
+        # Ensure data dirs exist
+        data_dir = os.path.dirname(DATA_PATH) or "."
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir, exist_ok=True)
 
-        # Model - must match the one used to create the index
+        vector_db_dir = os.path.dirname(VECTOR_DB_PATH) or "."
+        if not os.path.exists(vector_db_dir):
+            os.makedirs(vector_db_dir, exist_ok=True)
+
+        # Get compute device from environment
+        device = os.getenv('COMPUTE_DEVICE', 'cuda').lower()
+        if device not in ['cuda', 'cpu']:
+            device = 'cuda'
+        
+        # Model and storage
         self.embedding_model_name = embedding_model
-        self.model = None  # Load lazily
+        # Load model from cache only (no downloading)
+        try:
+            self.model = SentenceTransformer(self.embedding_model_name, local_files_only=True, device=device)
+        except (OSError, ValueError):
+            # If cache is empty, download once
+            logger.warning(f"Model not in cache, downloading: {self.embedding_model_name}")
+            self.model = SentenceTransformer(self.embedding_model_name, device=device)
 
         # In-memory state
         self.documents = []             # List of all document chunks

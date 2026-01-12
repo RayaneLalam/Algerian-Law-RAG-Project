@@ -5,11 +5,16 @@ import { Sidebar } from "./components/Sidebar";
 import { WelcomeScreen } from "./screens/WelcomeScreen";
 import { ChatMessages } from "./components/ChatMessages";
 import { InputArea } from "./components/InputArea";
+import { MdOutlineArrowLeft, MdOutlineArrowRight } from "react-icons/md";
+import { apiClient } from "./services/apiClient";
 import { AuthScreen } from "./components/AuthScreen";
 import { HiOutlineMenuAlt2 } from "react-icons/hi";
+import { useToast } from "./components/Toast";
+
 export const App = () => {
   const { language, theme } = useLanguageTheme();
   const { isAuthenticated, isLoading: authLoading, token } = useAuth();
+  const { showToast, ToastContainer } = useToast();
   const isArabic = language === "ar";
   const isDark = theme === "dark";
 
@@ -54,6 +59,12 @@ export const App = () => {
 
   const fetchConversationMessages = async (conversationId) => {
     try {
+      // Validate conversation ID
+      if (!conversationId || isNaN(conversationId) || conversationId <= 0) {
+        console.error("Invalid conversation ID for fetching messages:", conversationId);
+        return [];
+      }
+
       const response = await fetch(
         `http://localhost:5000/conversations/${conversationId}/messages`,
         {
@@ -71,11 +82,11 @@ export const App = () => {
         }));
         return formattedMessages;
       } else {
-        console.error("Failed to fetch messages");
+        console.error(`Failed to fetch messages for conversation ${conversationId}:`, response.status);
         return [];
       }
     } catch (error) {
-      console.error("Error fetching messages:", error);
+      console.error("Error fetching conversation messages:", error);
       return [];
     }
   };
@@ -98,7 +109,7 @@ export const App = () => {
     }
   };
 
-  const handleSendMessage = async (text) => {
+  const handleSendMessage = async (text, queryLanguage = "auto") => {
     if (!text.trim() || isLoading) return;
 
     setIsInputCentered(false);
@@ -108,107 +119,171 @@ export const App = () => {
     const updatedMessages = [
       ...messages,
       { role: "user", content: userMessage },
-      { role: "assistant", content: "" },
+      { role: "assistant", content: "", language: queryLanguage },
     ];
     setMessages(updatedMessages);
 
-    try {
-      const testModelVersionId = "default-model-v1";
-
-      const response = await fetch("http://localhost:5000/chat_stream", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+    // Save or update conversation
+    if (!currentConversationId) {
+      const newId = Date.now().toString();
+      setCurrentConversationId(newId);
+      setConversations((prev) => [
+        ...prev,
+        {
+          id: newId,
+          title: userMessage.substring(0, 50),
+          messages: updatedMessages,
+          createdAt: new Date().toISOString(),
         },
-        body: JSON.stringify({
-          message: userMessage,
-          conversation_id: currentConversationId,
-          model_version_id: testModelVersionId,
-        }),
-      });
+      ]);
+    } else {
+      setConversations((prev) =>
+        prev.map((conv) =>
+          conv.id === currentConversationId
+            ? { ...conv, messages: updatedMessages }
+            : conv
+        )
+      );
+    }
 
-      if (!response.ok || !response.body) {
-        throw new Error(`Server error: ${response.statusText}`);
-      }
+    const attemptApiCall = async (conversationId, isRetry = false) => {
+      try {
+        // Call the actual authenticated API
+        const response = await apiClient.chatStream(
+          userMessage,
+          conversationId,
+          queryLanguage,
+          token,
+          isRetry
+        );
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-      let displayedText = "";
+        // Handle streaming response
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let displayedText = "";
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
+            const chunk = decoder.decode(value);
+            const lines = chunk.split("\n");
 
-        const lines = chunk
-          .split("\n")
-          .filter((line) => line.startsWith("data:"))
-          .map((line) => line.replace(/^data:\s*/, "").trim());
-
-        for (const line of lines) {
-          if (line === "[DONE]") break;
-
-          displayedText += line + " ";
-
-          setMessages((prev) => {
-            const updated = [...prev];
-            updated[updated.length - 1] = {
-              ...updated[updated.length - 1],
-              content: displayedText.trim(),
-            };
-            return updated;
-          });
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  if (data.chunk) {
+                    displayedText += data.chunk;
+                    setMessages((prev) => {
+                      const updated = [...prev];
+                      updated[updated.length - 1] = {
+                        ...updated[updated.length - 1],
+                        content: displayedText,
+                      };
+                      return updated;
+                    });
+                  }
+                } catch (e) {
+                  // Ignore JSON parse errors
+                }
+              }
+            }
+          }
+        } finally {
+          reader.releaseLock();
         }
-      }
 
+        // Update conversation with final message
+        if (currentConversationId) {
+          setConversations((prev) =>
+            prev.map((conv) =>
+              conv.id === currentConversationId
+                ? {
+                    ...conv,
+                    messages: [
+                      ...updatedMessages.slice(0, -1),
+                      { role: "assistant", content: displayedText, language: queryLanguage },
+                    ],
+                  }
+                : conv
+            )
+          );
+        }
+
+        return { success: true };
+
+      } catch (error) {
+        // Handle 404 error (conversation not found)
+        if (error.status === 404 && !error.isRetry && conversationId) {
+          console.log("Conversation not found (404), clearing invalid ID and retrying...");
+          
+          // Clear the invalid conversation ID
+          setCurrentConversationId(null);
+          
+          // Remove from localStorage if stored there
+          if (localStorage.getItem('currentConversationId')) {
+            localStorage.removeItem('currentConversationId');
+          }
+          
+          // Show notification
+          showToast("Previous conversation not found. Starting a new one.", "warning", 4000);
+          
+          // Retry the request without conversation ID
+          return await attemptApiCall(null, true);
+        }
+        
+        // For other errors or if it's already a retry, throw the error
+        throw error;
+      }
+    };
+
+    try {
+      await attemptApiCall(currentConversationId);
+    } catch (error) {
+      console.error("Error calling API:", error);
+      const errorMessage = error.message || "Error communicating with server";
       setMessages((prev) => {
         const updated = [...prev];
         updated[updated.length - 1] = {
           ...updated[updated.length - 1],
-          content: displayedText.trim(),
+          content: `Error: ${errorMessage}. Make sure backend is running at http://localhost:5000`,
         };
         return updated;
       });
-
-      await fetchConversations();
-
-      if (!currentConversationId) {
-        const convResponse = await fetch(
-          "http://localhost:5000/conversations",
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
-        if (convResponse.ok) {
-          const data = await convResponse.json();
-          if (data.conversations && data.conversations.length > 0) {
-            setCurrentConversationId(parseInt(data.conversations[0].id));
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Chat stream error:", err);
-      alert("Error connecting to the assistant.");
     } finally {
       setIsLoading(false);
     }
   };
 
+  // const handleNewChat = () => {
+  //   setMessages([]);
+  //   setCurrentConversationId(null);
+  //   setIsInputCentered(true);
+  //   setIsShowSidebar(false);
+  // };
+
   const handleSelectConversation = async (id) => {
-    const conversationId = parseInt(id);
-    setCurrentConversationId(conversationId);
-    setIsInputCentered(false);
+    try {
+      // Ensure we have a valid ID
+      const conversationId = parseInt(id);
+      if (isNaN(conversationId) || conversationId <= 0) {
+        console.error("Invalid conversation ID:", id);
+        return;
+      }
+      
+      setCurrentConversationId(conversationId);
+      setIsInputCentered(false);
 
-    const conversationMessages =
-      await fetchConversationMessages(conversationId);
-    setMessages(conversationMessages);
+      const conversationMessages = await fetchConversationMessages(conversationId);
+      setMessages(conversationMessages);
 
-    if (window.innerWidth <= 640) {
-      setIsShowSidebar(false);
+      if (window.innerWidth <= 640) {
+        setIsShowSidebar(false);
+      }
+    } catch (error) {
+      console.error("Error selecting conversation:", error);
     }
   };
 
@@ -293,7 +368,12 @@ export const App = () => {
         left: 0,
         right: 0,
         bottom: 0,
+        direction: isArabic ? "rtl" : "ltr",
+        transition: "margin 0.3s ease",
+        marginLeft: isShowSidebar && !isArabic ? "256px" : "0",
+        marginRight: isShowSidebar && isArabic ? "256px" : "0",
       }}
+      
     >
       {/* Delete Confirmation Modal */}
       {showDeleteModal && (
@@ -438,42 +518,37 @@ export const App = () => {
           direction: isArabic ? "rtl" : "ltr",
         }}
       >
-        {/* Floating toggle button - shows when sidebar is closed */}
-        {!isShowSidebar && (
-          <button
-            onClick={() => setIsShowSidebar(true)}
-            style={{
-              position: "absolute",
-              top: "16px",
-              [isArabic ? "right" : "left"]: "16px",
-              zIndex: 30,
-              width: "40px",
-              height: "40px",
-              borderRadius: "8px",
-              border: "none",
-              cursor: "pointer",
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              backgroundColor: isDark ? "#4a4b4a" : "#e5e5e5",
-              color: isDark ? "#ffffff" : "#1c1c1c",
-              transition: "background-color 0.2s",
-              boxShadow: "0 2px 8px rgba(0, 0, 0, 0.1)",
-            }}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.backgroundColor = isDark
-                ? "#5a5b5a"
-                : "#d4d4d4")
-            }
-            onMouseLeave={(e) =>
-              (e.currentTarget.style.backgroundColor = isDark
-                ? "#4a4b4a"
-                : "#e5e5e5")
-            }
-          >
-            <HiOutlineMenuAlt2 size={20} />
-          </button>
-        )}
+        <button
+          onClick={() => setIsShowSidebar(!isShowSidebar)}
+          style={{
+            position: "absolute",
+            top: "16px",
+            [isArabic ? "right" : "left"]: isShowSidebar 
+              ? (window.innerWidth > 640 ? "272px" : "16px")
+              : "16px",
+            zIndex: 20,
+            padding: "8px",
+            backgroundColor: isDark
+              ? "rgba(74, 75, 74, 0.5)"
+              : "rgba(229, 229, 229, 0.5)",
+            borderRadius: "8px",
+            border: "none",
+            cursor: "pointer",
+            transition: "all 0.3s ease",
+          }}
+        >
+          {isShowSidebar ? (
+            <MdOutlineArrowRight
+              size={24}
+              color={isDark ? "#ffffff" : "#000000"}
+            />
+          ) : (
+            <MdOutlineArrowLeft
+              size={24}
+              color={isDark ? "#ffffff" : "#000000"}
+            />
+          )}
+        </button>
 
         {messages.length === 0 ? (
           <WelcomeScreen />
@@ -487,6 +562,9 @@ export const App = () => {
           isCentered={isInputCentered && messages.length === 0}
         />
       </div>
+      
+      {/* Toast notifications */}
+      <ToastContainer />
     </div>
   );
 };

@@ -25,4 +25,4 @@ def decode_token(token):
         payload = jwt.decode(token, secret, algorithms=["HS256"])
         return payload
     except Exception as e:
-        return e
+        return None

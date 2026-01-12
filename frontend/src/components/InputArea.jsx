@@ -1,10 +1,12 @@
 import React, { useState } from "react";
 import { useLanguageTheme } from "../contexts/LanguageThemeContext";
 import { BiSend } from "react-icons/bi";
+import { MdLanguage } from "react-icons/md";
 
 export const InputArea = ({ onSend, isLoading, isCentered }) => {
   const [text, setText] = useState("");
-  const { language, theme, t } = useLanguageTheme();
+  const [showLanguageMenu, setShowLanguageMenu] = useState(false);
+  const { language, theme, t, queryLanguage, setQueryLanguagePreference } = useLanguageTheme();
   const isArabic = language === "ar";
   const isDark = theme === "dark";
 
@@ -17,7 +19,7 @@ export const InputArea = ({ onSend, isLoading, isCentered }) => {
 
   const handleSubmit = () => {
     if (text.trim() && !isLoading) {
-      onSend(text);
+      onSend(text, queryLanguage);
       setText("");
     }
   };
@@ -27,6 +29,11 @@ export const InputArea = ({ onSend, isLoading, isCentered }) => {
       e.preventDefault();
       handleSubmit();
     }
+  };
+
+  const handleLanguageSelect = (lang) => {
+    setQueryLanguagePreference(lang);
+    setShowLanguageMenu(false);
   };
 
   return (
@@ -52,6 +59,103 @@ export const InputArea = ({ onSend, isLoading, isCentered }) => {
           padding: isCentered ? "0 16px" : "24px 16px",
         }}
       >
+        {!isCentered && (
+          <div
+            style={{
+              marginBottom: "12px",
+              display: "flex",
+              gap: "8px",
+              direction: isArabic ? "rtl" : "ltr",
+              alignItems: "center",
+            }}
+          >
+            <div style={{ position: "relative" }}>
+              <button
+                onClick={() => setShowLanguageMenu(!showLanguageMenu)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "6px 12px",
+                  backgroundColor: inputBg,
+                  border: `1px solid ${borderColor}`,
+                  borderRadius: "4px",
+                  color: textColor,
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = accentColor;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = borderColor;
+                }}
+              >
+                <MdLanguage size={14} />
+                {queryLanguage === "auto"
+                  ? t.detectLanguage
+                  : queryLanguage === "ar"
+                    ? t.arabic
+                    : t.french}
+              </button>
+              {showLanguageMenu && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "100%",
+                    left: isArabic ? "auto" : "0",
+                    right: isArabic ? "0" : "auto",
+                    marginTop: "4px",
+                    backgroundColor: inputBg,
+                    border: `1px solid ${borderColor}`,
+                    borderRadius: "4px",
+                    zIndex: 100,
+                    minWidth: "120px",
+                  }}
+                >
+                  {["auto", "fr", "ar"].map((lang) => (
+                    <button
+                      key={lang}
+                      onClick={() => handleLanguageSelect(lang)}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        padding: "8px 12px",
+                        backgroundColor:
+                          queryLanguage === lang ? accentColor : "transparent",
+                        color: queryLanguage === lang ? "#000" : textColor,
+                        border: "none",
+                        textAlign: isArabic ? "right" : "left",
+                        cursor: "pointer",
+                        fontSize: "12px",
+                        transition: "all 0.2s",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (queryLanguage !== lang) {
+                          e.currentTarget.style.backgroundColor = isDark
+                            ? "#3a3a3a"
+                            : "#f0f0f0";
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (queryLanguage !== lang) {
+                          e.currentTarget.style.backgroundColor = "transparent";
+                        }
+                      }}
+                    >
+                      {lang === "auto"
+                        ? t.detectLanguage
+                        : lang === "ar"
+                          ? t.arabic
+                          : t.french}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         <div
           style={{
             display: "flex",

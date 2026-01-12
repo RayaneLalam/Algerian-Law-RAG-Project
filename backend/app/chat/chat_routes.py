@@ -1,15 +1,37 @@
 import os
 import json
+import logging
 from flask import request, jsonify, Response, stream_with_context, current_app, g
-from ..services.search_service.search_service import SearchService
 from . import chat_bp
 from app.auth.auth_middleware import jwt_required
-from .utils import stream_assistant_reply
+from .utils import stream_assistant_reply, stream_assistant_reply_demo
 from . import chat_models
+from ..services.language_service.language_service import LanguageService
+from ..services.search_service.bilingual_search_service import BilingualSearchService
 
-# Instantiate services globally
-search_service = SearchService()
+logger = logging.getLogger(__name__)
 
+# Global service instances (lazy loaded)
+_language_service = None
+_search_service = None
+
+def get_language_service():
+    """Get or create the singleton language service."""
+    global _language_service
+    if _language_service is None:
+        _language_service = LanguageService()
+    return _language_service
+
+def get_search_service():
+    """Get or create the singleton search service."""
+    global _search_service
+    if _search_service is None:
+        _search_service = BilingualSearchService()
+    return _search_service
+
+# ============================================================================
+# CONVERSATION MANAGEMENT ENDPOINTS (Authenticated)
+# ============================================================================
 
 @chat_bp.route("/conversations", methods=["GET"])
 @jwt_required
@@ -57,8 +79,7 @@ def get_conversation_messages(conversation_id):
     user_id = user["id"]
 
     try:
-        messages = chat_models.get_conversation_messages(
-            conversation_id, user_id)
+        messages = chat_models.get_conversation_messages(conversation_id, user_id)
 
         if messages is None:
             return jsonify({"error": "Conversation not found or access denied"}), 404
@@ -134,64 +155,117 @@ def delete_conversation(conversation_id):
         return jsonify({"error": f"Server error: {e}"}), 500
 
 
+# ============================================================================
+# CHAT ENDPOINTS
+# ============================================================================
+
+@chat_bp.route("/chat_stream_demo", methods=["POST"])
+def chat_stream_demo():
+    """
+    DEMO endpoint - No authentication required for testing.
+    Uses the working logic for language detection and search.
+    """
+    print("chat_stream_demo called")
+    data = request.get_json(silent=True) or {}
+    if "message" not in data:
+        return jsonify({"error": "Missing 'message' in JSON body"}), 400
+    
+    message = str(data["message"])
+    language = data.get("language", 'auto')
+    # conversation_id is optional for demo
+    
+    try:
+        # 1. Detect or normalize language
+        lang_service = get_language_service()
+        if language == 'auto':
+            language = lang_service.detect_response_language(message)
+        else:
+            language = lang_service.normalize_language(language)
+        
+        logger.info(f"[DEMO] Processing query in language: {language}")
+        
+        # 2. Search documents in appropriate language
+        top_k = 3
+        srch_service = get_search_service()
+        results = srch_service.search(message, language=language, top_k=top_k)
+        
+        # Debug log for results
+        logger.info(f"[DEMO] Found {len(results)} results")
+        
+        vectors_json_str = json.dumps(results, ensure_ascii=False)
+
+        # 3. Return SSE response (using demo utility)
+        return Response(
+            stream_with_context(stream_assistant_reply_demo(message, vectors_json_str, language=language)),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "X-Language": language
+            }
+        )
+    except Exception as e:
+        logger.exception("chat_stream_demo error")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+
 @chat_bp.route("/chat_stream", methods=["GET", "POST"])
 @jwt_required
 def chat_stream():
     """
-    Protected endpoint.
-    - Accepts message (POST JSON or GET query).
-    - Optional conversation_id (JSON or query) to continue a conversation.
-    - Optional model_version_id to specify which model to use.
-    - Stores user message, streams assistant reply as SSE, saves assistant message after streaming.
+    Protected bilingual chat endpoint.
+    - Enforces Authentication (@jwt_required).
+    - Uses the exact same Language/Search logic as the working demo.
+    - Saves conversation history to the database.
     """
-    user = getattr(g, "current_user", None)
-    if not user:
-        return jsonify({"error": "Unauthorized"}), 401
-    user_id = user["id"]
-
-    # get message + optional conversation_id + optional model_version_id
-    if request.method == "POST":
-        data = request.get_json(silent=True) or {}
-        if "message" not in data:
-            return jsonify({"error": "Missing 'message' in JSON body"}), 400
-        message = str(data["message"])
-        conversation_id = data.get("conversation_id")
-        model_version_id = data.get("model_version_id")
-    else:
-        message = request.args.get("message")
-        if message is None:
-            return jsonify({"error": "Missing 'message' query parameter"}), 400
-        conversation_id = request.args.get("conversation_id")
-        model_version_id = request.args.get("model_version_id")
-
     try:
-        # Get default model version if none specified
-        if not model_version_id:
-            model_version_id = chat_models.get_default_model_version()
-            if not model_version_id:
-                return jsonify({"error": "No model versions available"}), 500
+        user = getattr(g, "current_user", None)
+        if not user:
+            return jsonify({"error": "Unauthorized"}), 401
+        user_id = user["id"]
 
-        # validate or create conversation
+        # 1. Parse Input
+        if request.method == "POST":
+            data = request.get_json(silent=True) or {}
+            if "message" not in data:
+                return jsonify({"error": "Missing 'message' in JSON body"}), 400
+            message = str(data["message"])
+            conversation_id = data.get("conversation_id")
+            language = data.get("language", 'auto')
+        else:
+            message = request.args.get("message")
+            if message is None:
+                return jsonify({"error": "Missing 'message' query parameter"}), 400
+            conversation_id = request.args.get("conversation_id")
+            language = request.args.get("language", 'auto')
+            
+        logger.info(f"Processing authenticated query for user {user_id}")
+        
+        # 2. Detect or normalize language (Same logic as Demo)
+        lang_service = get_language_service()
+        if language == 'auto':
+            language = lang_service.detect_response_language(message)
+        else:
+            language = lang_service.normalize_language(language)
+        
+        logger.info(f"Language detected/normalized: {language}")
+        
+        # 3. Manage Conversation (DB Logic)
         if conversation_id:
-            # Convert to int if it's a string
             try:
                 conversation_id = int(conversation_id)
             except (ValueError, TypeError):
                 return jsonify({"error": "Invalid conversation_id format"}), 400
 
-            conv = chat_models.get_conversation_for_user(
-                conversation_id, user_id)
+            conv = chat_models.get_conversation_for_user(conversation_id, user_id)
             if not conv:
                 return jsonify({"error": "Conversation not found or access denied"}), 404
         else:
+            # Create new conversation if ID not provided
             title = (message[:60] + "...") if len(message) > 60 else message
-            conversation_id = chat_models.create_conversation(
-                user_id, title=title)
+            conversation_id = chat_models.create_conversation(user_id, title=title)
 
-        # Update conversation timestamp
-        chat_models.update_conversation_timestamp(conversation_id)
-
-        # store user message with model_version_id
+        # 4. Store User Message
         chat_models.insert_message(
             conversation_id,
             role="user",
@@ -199,15 +273,15 @@ def chat_stream():
             sender_user_id=user_id,
         )
 
-        # Search for relevant articles
-        top_k = 5  # Increased to get more context
-        results = search_service.search(message, top_n=top_k)
+        # 5. Search Documents (Same logic as Demo)
+        top_k = 3
+        srch_service = get_search_service()
+        results = srch_service.search(message, language=language, top_k=top_k)
 
-        # Debug logging
+        # Debug logging for Authenticated route
         current_app.logger.info(f"Query: {message}")
         current_app.logger.info(f"Found {len(results)} results")
-        current_app.logger.info(f"Using model version: {model_version_id}")
-
+        
         for i, result in enumerate(results, 1):
             doc = result.get("document", {})
             current_app.logger.info(
@@ -218,23 +292,25 @@ def chat_stream():
 
         vectors_json_str = json.dumps(results, ensure_ascii=False)
 
-        # Stream LLM reply (real response) with model_version_id
+        # 6. Stream Response & Save to DB
+        # stream_assistant_reply handles saving the assistant's response to the DB
         return Response(
             stream_with_context(
                 stream_assistant_reply(
-                    message,
-                    vectors_json_str,
-                    conversation_id=conversation_id,
-                    model_version_id=model_version_id
+                    message, 
+                    vectors_json_str, 
+                    conversation_id, 
+                    language=language
                 )
             ),
             mimetype="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no"
+                "X-Accel-Buffering": "no",
+                "X-Language": language
             }
         )
 
     except Exception as e:
-        current_app.logger.exception("chat_stream error")
-        return jsonify({"error": f"Server error: {e}"}), 500
+        logger.exception("chat_stream error")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500

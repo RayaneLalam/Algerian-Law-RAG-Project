@@ -1,34 +1,54 @@
 from flask import current_app
 from . import chat_models
-from ..utils.prompt_utils import _load_prompt_template, _format_context_from_results
+from ..utils.prompt_utils import load_language_prompt_template, _format_context_from_results
+from ..services.llm_service.instance import get_llm_service
 import json
-from ..services.llm_service.llm_api import LLM_Service
-import os
+import logging
 
-PROMPT_TEMPLATE_PATH = os.path.join(".", "app", "prompt_templates", "qa_with_context.txt")
-llm_service = LLM_Service()
+logger = logging.getLogger(__name__)
 
 
-def make_reply_stream(received_message: str, vectors_json_str: str):
+def make_reply_stream(received_message: str, vectors_json_str: str, language: str = 'fr'):
+    """Generate streaming reply with language awareness using global LLM service."""
+    
     try:
         results = json.loads(vectors_json_str) if vectors_json_str else []
     except Exception:
         results = []
-
-    context_block = _format_context_from_results(results)
-    template = _load_prompt_template(PROMPT_TEMPLATE_PATH)
-
+    
+    language = language.lower().strip()
+    language = 'ar' if language in ('ar', 'arabic', 'العربية') else 'fr'
+    
+    context_block = _format_context_from_results(results, language=language)
+    template = load_language_prompt_template(language)
+    
     try:
         prompt = template.format(query=received_message, context=context_block)
     except Exception:
         prompt = f"Question: {received_message}\n\nContext:\n{context_block}"
+    
+    # Use global singleton instance - no new instance creation
+    llm_service = get_llm_service()
+    return llm_service.generate_completion(prompt, language=language, stream=True)
 
-    return llm_service.get_completion_stream(prompt)
+
+def stream_assistant_reply_demo(message, vectors_json_str, language: str = 'fr'):
+    """
+    Demo streaming (no auth) - doesn't save to database.
+    Just yields SSE chunks without persisting.
+    """
+    try:
+        for chunk in make_reply_stream(message, vectors_json_str, language=language):
+            yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+    except GeneratorExit:
+        current_app.logger.debug("Client disconnected from SSE stream")
+    except Exception as e:
+        err = f"[server error while generating reply: {e}]"
+        current_app.logger.exception("stream_assistant_reply_demo error")
+        yield f"data: {json.dumps({'chunk': err})}\n\n"
 
 
-
-
-def stream_assistant_reply(message, vectors_json_str, conversation_id, model_version_id):
+def stream_assistant_reply(message, vectors_json_str, conversation_id, language: str = 'fr'):
     """
     Generator that yields SSE chunks from make_reply_stream(...).
     On finish (or partial finish), saves the concatenated assistant message
@@ -36,7 +56,7 @@ def stream_assistant_reply(message, vectors_json_str, conversation_id, model_ver
     """
     assistant_chunks = []
     try:
-        for chunk in make_reply_stream(message, vectors_json_str):
+        for chunk in make_reply_stream(message, vectors_json_str, language=language):
             assistant_chunks.append(chunk)
             # Send chunk in SSE format without JSON wrapping
             yield f"data: {chunk}\n\n"
@@ -45,7 +65,6 @@ def stream_assistant_reply(message, vectors_json_str, conversation_id, model_ver
         yield "data: [DONE]\n\n"
         
     except GeneratorExit:
-        # client disconnected — fall through to finally block to save partial response
         current_app.logger.debug("Client disconnected from SSE stream")
     except Exception as e:
         err = f"[server error while generating reply: {e}]"
@@ -55,7 +74,7 @@ def stream_assistant_reply(message, vectors_json_str, conversation_id, model_ver
         # join and persist assistant full text (even if partial)
         print("got here")
         assistant_full = "".join(assistant_chunks).strip()
-        if assistant_full:
+        if assistant_full and conversation_id:
             try:
                 chat_models.insert_message(conversation_id, "assistant", content=assistant_full)
                 chat_models.update_conversation_timestamp(conversation_id)
