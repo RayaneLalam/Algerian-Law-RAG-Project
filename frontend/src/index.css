@@ -1,7 +1,8 @@
 @import "tailwindcss";
 
-/* Custom Color Variables */
-:root {
+/* Custom Theme Configuration for Tailwind v4 */
+@theme {
+  /* Custom Colors */
   --color-accent: #d4af37;
   --color-accent-light: rgba(212, 175, 55, 0.08);
   --color-accent-dark: rgba(212, 175, 55, 0.1);
@@ -30,38 +31,36 @@
   --font-cairo: "Cairo", sans-serif;
 }
 
+/* 1. FORCE HTML AND BODY TO FILL VIEWPORT WITHOUT SCROLLING */
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  height: 100dvh; /* Dynamic viewport height for mobile */
+  overflow: hidden; /* Prevents the "4-side" padding/scroll issues */
+  background-color: #232323; /* Set a default matching your dark theme to avoid white flashes */
+}
+
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-html,
+/* 2. REMOVE DEFAULT MARGINS FROM ALL ELEMENTS */
 body {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  font-family: "Inter", sans-serif;
+  font-family: var(--font-inter);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-#root {
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
+
+[dir="rtl"] {
+  font-family: var(--font-cairo);
 }
 
-/* Arabic font styling */
-[lang="ar"],
-[dir="rtl"],
-.arabic-text {
-  font-family: "Cairo", sans-serif !important;
-}
-
-/* Scrollbar styling for webkit browsers */
+/* Scrollbar Styling */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -72,38 +71,69 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(155, 155, 155, 0.5);
+  background: #4a4b4a;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(155, 155, 155, 0.7);
+  background: #525252;
 }
 
-/* Dark mode scrollbar */
-.dark ::-webkit-scrollbar-thumb {
-  background: rgba(100, 100, 100, 0.5);
+/* Light mode scrollbar */
+@media (prefers-color-scheme: light) {
+  ::-webkit-scrollbar-thumb {
+    background: #e5e5e5;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #a3a3a3;
+  }
 }
 
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 100, 100, 0.7);
+/* Animation for typing effect */
+@keyframes pulse-custom {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
-/* Remove default button styles */
-button {
-  font-family: inherit;
+.animate-pulse-custom {
+  animation: pulse-custom 2s ease-in-out infinite;
 }
 
-/* Remove default input styles */
-input {
-  font-family: inherit;
+/* Focus states */
+input:focus,
+button:focus {
+  outline: none;
 }
 
-/* Prevent text selection on UI elements */
-button,
-.no-select {
-  -webkit-user-select: none;
-  -moz-user-select: none;
-  -ms-user-select: none;
-  user-select: none;
+@keyframes bottomGlow {
+  0% {
+    background-size: 100% 100%;
+    background-position: center 100%;
+  }
+  50% {
+    background-size: 120% 120%;
+    background-position: center 98%;
+  }
+  100% {
+    background-size: 100% 100%;
+    background-position: center 100%;
+  }
 }
+
+.welcome-bg {
+  height: 100%;
+  width: 100%;
+  animation: bottomGlow 14s ease-in-out infinite;
+  background-repeat: no-repeat;
+  /* background-attachment: fixed; <-- REMOVE THIS, it causes sizing bugs in Flexbox */
+  background-position: center bottom;
+  background-size: cover;
+  transition: background 0.5s ease;
+}
+
