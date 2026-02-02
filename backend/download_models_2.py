@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 
 # Define the exact models we need
 MODELS_TO_DOWNLOAD = [
-    # "dangvantuan/sentence-camembert-large",
-    # "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "dangvantuan/sentence-camembert-large",
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
     "bofenghuang/vigogne-2-7b-chat",
     "Qwen/Qwen2.5-7B-Instruct"
 ]
