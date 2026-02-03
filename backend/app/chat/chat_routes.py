@@ -252,7 +252,7 @@ def chat_stream():
 
         # 5. Search Documents
         srch_service = get_search_service()
-        results = srch_service.search(message, language=language, top_k=3, search_type='bm25')  # Use BM25 for Arabic
+        results = srch_service.search(message, language=language, top_k=3)  # Use BM25 for Arabic
 
         # Updated Logging Logic to match Service Output
         current_app.logger.info(f"Language: {language} | Query: {message[:50]}...")
