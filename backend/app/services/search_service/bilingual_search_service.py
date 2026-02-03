@@ -161,7 +161,123 @@ class BilingualSearchService:
                 results = self._search_multilingual(query, top_k, 'fr')
         
         return results
+    
+    def _search_french(self, query: str, top_k: int) -> List[Dict]:
+        """Search French index."""   
+        try:
+            if self.french_embedder is None:
+                logger.error("French embedder not available")
+                return []
+       
+            logger.debug(f"French search - total docs: {len(self.french_docs)}, index vectors: {self.french_index.ntotal}")
 
+           
+            query_embedding = self.french_embedder.encode(
+                [query],
+                convert_to_numpy=True,
+                normalize_embeddings=True
+            )
+       
+            distances, indices = self.french_index.search(query_embedding.astype('float32'), top_k)
+
+            logger.debug(f"FAISS returned {len(indices[0])} indices: {indices[0]}, distances: {distances[0]}")
+           
+            results = []
+            for i, (idx, distance) in enumerate(zip(indices[0], distances[0])):
+                if idx == -1:
+                    logger.debug(f"Skipping invalid index: {idx}")
+                    continue                
+                logger.debug(f"Processing result {i}: doc_id={idx}, distance={distance}")             
+                # Try to get document with robust ID lookup
+                doc = None
+         
+                # Try integer index lookup
+                try:
+                    if isinstance(idx, (int, np.integer)) and 0 <= int(idx) < len(self.french_docs):
+
+                        doc = self.french_docs[int(idx)]
+
+                        logger.debug(f"Found doc at index {idx} (int lookup)")
+
+                    else:
+
+                        logger.warning(f"Index {idx} out of range [0, {len(self.french_docs)-1}]")
+
+                        continue
+
+                except (IndexError, TypeError) as e:
+
+                    logger.warning(f"Doc ID {idx} not found in french docs: {e}")
+
+                    continue
+
+               
+
+                if doc is None:
+
+                    logger.warning(f"Doc ID {idx} not found in french docstore")
+
+                    continue
+
+               
+
+                # Convert distance to similarity score based on FAISS metric
+
+                # FAISS typically uses L2 distance or Inner Product
+
+                # For L2: lower distance = higher similarity
+
+                # For Inner Product with normalized vectors: higher score = higher similarity
+
+                if distance < 0:  
+
+                    # Inner product case - score is already similarity-like
+
+                    similarity = abs(float(distance))
+
+                elif distance <= 1.0:
+
+                    # Likely inner product or cosine similarity (0-1 range)
+
+                    similarity = 1.0 - float(distance)
+
+                else:
+
+                    # L2 distance case - convert to similarity
+
+                    similarity = 1.0 / (1.0 + float(distance))
+
+               
+
+                result_doc = doc.copy()
+
+                result_doc['score'] = float(distance)
+
+                result_doc['similarity'] = similarity
+
+                result_doc['language'] = 'fr'
+
+                results.append(result_doc)
+
+               
+
+                logger.debug(f"Added result: similarity={similarity:.4f}, content_length={len(str(doc.get('content', '')))}")
+
+           
+
+            logger.info(f"French search returned {len(results)} results for query: {query[:50]}...")
+
+            return results
+
+           
+
+        except Exception as e:
+
+            logger.error(f"Error searching French index: {e}", exc_info=True)
+
+            return []
+
+   
     def _search_arabic_bm25(self, query: str, top_k: int) -> List[Dict]:
         try:
             # 1. Tokenize query (using the same logic as generation)

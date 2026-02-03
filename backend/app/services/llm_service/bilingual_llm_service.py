@@ -21,7 +21,7 @@ class BilingualLLMService:
     def __init__(self):
         self.settings = settings
         self.use_local_llms = settings.USE_LOCAL_LLMS
-        self.local_model = "gemma3:4b"
+        self.local_model = "gemma:7b"
         
         # Initialize Ollama Client (OpenAI compatible)
         try:
