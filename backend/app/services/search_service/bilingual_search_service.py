@@ -6,7 +6,7 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from typing import List, Dict
 
-from .utils import normalize_language
+from .utils import normalize_language, reciprocal_rank_fusion
 from .engines import SearchEnginesMixin
 
 # Clear GPU cache
@@ -116,3 +116,26 @@ class BilingualSearchService(SearchEnginesMixin):
         # Diagnostic code (logic remains identical to original)
         results = self.search(query, language, top_k=3)
         return {"query": query, "results_count": len(results), "search_results": results}
+    
+
+    def hybrid_search(self, query: str, language: str = 'fr', top_k: int = 3) -> List[Dict]:
+        """
+        Performs hybrid search by retrieving 15 results from BM25 and 
+        15 from Vector search, then merging the top 3.
+        """
+        language = normalize_language(language)
+        
+        # 1. Retrieve 15 from each engine
+        # We call the internal methods directly
+        if language == 'ar':
+            vector_results = self._search_arabic(query, top_k=15)
+            bm25_results = self._search_arabic_bm25(query, top_k=15)
+        else:
+            vector_results = self._search_french(query, top_k=15)
+            bm25_results = self._search_french_bm25(query, top_k=15)
+
+        # 2. Merge using RRF
+        merged_results = reciprocal_rank_fusion([vector_results, bm25_results])
+
+        # 3. Return the best 3
+        return merged_results[:top_k]
