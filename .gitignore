@@ -1,0 +1,4 @@
+data/faiss/*.index
+data/faiss/*.index.meta
+data/faiss/*
+*.pkl
