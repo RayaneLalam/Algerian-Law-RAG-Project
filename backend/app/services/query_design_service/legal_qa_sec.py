@@ -8,8 +8,10 @@ from datetime import datetime, timedelta
 
 class SecurityFilter:
     """
-    Security filter to detect and prevent prompt injection
+    Enhanced security filter to detect and prevent prompt injection
     and filter restricted content for legal chatbot
+    
+    This version uses STRICT RULE-BASED checking to prevent jailbreaking
     """
     
     def __init__(self, config):
@@ -22,21 +24,61 @@ class SecurityFilter:
         self.config = config
         self.logger = logging.getLogger("legal_qa.security")
         
+        # Extended rule-based patterns for stricter checking
+        self.additional_injection_patterns = [
+            # Role manipulation attempts
+            r'\b(?:you\s+are|tu\s+es|أنت)\s+(?:now|maintenant|الآن)',
+            r'\b(?:act\s+as|agir\s+comme|تصرف\s+كـ)',
+            r'\b(?:pretend|faire\s+semblant|تظاهر)',
+            r'\b(?:roleplay|jeu\s+de\s+rôle|لعب\s+دور)',
+            
+            # System instruction manipulation
+            r'\b(?:system|système|النظام)\s*[:：]',
+            r'\b(?:assistant|مساعد)\s*[:：]',
+            r'\b(?:instruction|تعليمة|consigne)',
+            
+            # Encoding/obfuscation attempts
+            r'\\x[0-9a-f]{2}',
+            r'&#\d+;',
+            r'%[0-9a-f]{2}',
+            r'\$\{.*\}',
+            
+            # Meta-commands
+            r'\b(?:reset|réinitialiser|إعادة\s+تعيين)',
+            r'\b(?:clear|effacer|مسح)\s+(?:context|contexte|السياق)',
+            r'\b(?:override|remplacer|تجاوز)',
+            
+            # Information extraction attempts
+            r'\b(?:show|afficher|أظهر)\s+(?:prompt|invite|المحث)',
+            r'\b(?:reveal|révéler|كشف)',
+            r'\b(?:extract|extraire|استخراج)',
+            
+            # Boundary testing
+            r'```.*```',
+            r'<\|.*\|>',
+            r'\[INST\]|\[/INST\]',
+            r'<start_of_turn>|<end_of_turn>',
+        ]
+    
     def check_query_security(self, query):
         """
-        Apply rule-based security checks to the query
+        Apply STRICT rule-based security checks to the query
+        
+        This is the PRIMARY security gate - queries that fail here should
+        NOT proceed to LLM enhancement or any further processing.
         
         Args:
             query: User query text (French or Arabic)
             
         Returns:
-            dict: Security status with flags and reasons
+            dict: Security status with flags, reasons, and severity
         """
         # Basic validation
         if not query or not isinstance(query, str):
             return {
                 "is_secure": False, 
-                "reason": "Invalid query format"
+                "reason": "Invalid query format",
+                "severity": "critical"
             }
         
         # Strip whitespace
@@ -44,7 +86,8 @@ class SecurityFilter:
         if not query:
             return {
                 "is_secure": False,
-                "reason": "Empty query"
+                "reason": "Empty query",
+                "severity": "low"
             }
             
         # Length check
@@ -52,48 +95,108 @@ class SecurityFilter:
             self.logger.warning(f"Query exceeds max length: {len(query)}")
             return {
                 "is_secure": False, 
-                "reason": "Query exceeds maximum allowed length"
+                "reason": "Query exceeds maximum allowed length",
+                "severity": "medium"
+            }
+        
+        # Check for excessive special characters (potential obfuscation)
+        special_char_count = sum(1 for c in query if not c.isalnum() and not c.isspace())
+        if special_char_count > len(query) * 0.3:  # More than 30% special chars
+            self.logger.warning(f"Excessive special characters detected: {special_char_count}/{len(query)}")
+            return {
+                "is_secure": False,
+                "reason": "Suspicious character distribution",
+                "severity": "high"
+            }
+        
+        # Check for repeated suspicious patterns
+        if re.search(r'(.{3,})\1{3,}', query):  # Same pattern repeated 4+ times
+            self.logger.warning(f"Repeated pattern detected in query")
+            return {
+                "is_secure": False,
+                "reason": "Suspicious repetitive pattern",
+                "severity": "high"
             }
             
-        # Check for potential prompt injection patterns
+        # Check config blocklist patterns (HIGH PRIORITY)
         for pattern in self.config.security_patterns['blocklist']:
             try:
                 if re.search(pattern, query, re.IGNORECASE):
-                    self.logger.warning(f"Blocklist pattern matched in query")
+                    self.logger.warning(f"Blocklist pattern matched: {pattern}")
                     return {
                         "is_secure": False,
-                        "reason": "Potential security violation detected"
+                        "reason": "Prompt injection attempt detected",
+                        "severity": "critical"
                     }
             except Exception as e:
                 self.logger.error(f"Error checking security pattern: {e}")
+        
+        # Check additional injection patterns
+        for pattern in self.additional_injection_patterns:
+            try:
+                if re.search(pattern, query, re.IGNORECASE):
+                    self.logger.warning(f"Additional injection pattern matched: {pattern}")
+                    return {
+                        "is_secure": False,
+                        "reason": "System manipulation attempt detected",
+                        "severity": "critical"
+                    }
+            except Exception as e:
+                self.logger.error(f"Error checking additional pattern: {e}")
                 
         # Check for SQL injection attempts
         sql_keywords = [
             'select ', 'insert ', 'update ', 'delete ', 'drop ', 
-            '--', '/*', '*/', ';--', 'union ', 'exec('
+            '--', '/*', '*/', ';--', 'union ', 'exec(', 'execute ',
+            'alter ', 'create ', 'truncate ', 'grant ', 'revoke '
         ]
         query_lower = query.lower()
         if any(keyword in query_lower for keyword in sql_keywords):
             self.logger.warning(f"SQL injection pattern detected in query")
             return {
                 "is_secure": False,
-                "reason": "Potential SQL injection attempt"
+                "reason": "SQL injection attempt detected",
+                "severity": "critical"
             }
         
         # Check for script injection (XSS)
         xss_patterns = [
             r'<script', r'javascript:', r'onerror=', r'onclick=',
-            r'<iframe', r'<embed', r'<object'
+            r'<iframe', r'<embed', r'<object', r'onload=',
+            r'<img[^>]+src', r'eval\s*\(', r'expression\s*\('
         ]
         for pattern in xss_patterns:
             if re.search(pattern, query, re.IGNORECASE):
                 self.logger.warning(f"XSS pattern detected in query")
                 return {
                     "is_secure": False,
-                    "reason": "Potential XSS attempt detected"
+                    "reason": "Script injection attempt detected",
+                    "severity": "critical"
+                }
+        
+        # Check for path traversal attempts
+        path_traversal_patterns = [r'\.\./', r'\.\.\%', r'\.\.\\']
+        for pattern in path_traversal_patterns:
+            if re.search(pattern, query):
+                self.logger.warning(f"Path traversal pattern detected")
+                return {
+                    "is_secure": False,
+                    "reason": "Path traversal attempt detected",
+                    "severity": "critical"
+                }
+        
+        # Check for command injection
+        command_patterns = [r'\$\(', r'`.*`', r';\s*(?:rm|curl|wget|cat|chmod)']
+        for pattern in command_patterns:
+            if re.search(pattern, query):
+                self.logger.warning(f"Command injection pattern detected")
+                return {
+                    "is_secure": False,
+                    "reason": "Command injection attempt detected",
+                    "severity": "critical"
                 }
             
-        return {"is_secure": True}
+        return {"is_secure": True, "severity": "none"}
         
     def scrub_sensitive_data(self, text):
         """

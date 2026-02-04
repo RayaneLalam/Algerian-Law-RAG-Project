@@ -9,6 +9,9 @@ class LegalQAService:
     """
     Main service for legal question answering
     Handles bilingual queries (French + Arabic)
+    
+    SECURITY ENHANCED: Dangerous queries are blocked IMMEDIATELY
+    without LLM enhancement or further processing
     """
     
     def __init__(self, config_path=None):
@@ -51,6 +54,8 @@ class LegalQAService:
         """
         Process user query with security and language detection
         
+        CRITICAL: Dangerous queries are REJECTED IMMEDIATELY without enhancement
+        
         Args:
             query: User question (French or Arabic)
             conversation_history: Previous messages
@@ -66,45 +71,71 @@ class LegalQAService:
             "is_continuation": False,
             "is_secure": True,
             "security_reason": None,
+            "security_severity": None,
             "rate_limited": False
         }
         
-        # Step 1: Detect language
-        language = self.config.detect_language(query)
-        result["language"] = language
-        self.logger.info(f"Detected language: {language}")
-        
-        # Step 2: Check rate limiting
+        # Step 1: Check rate limiting FIRST
         if user_id and not self.rate_limiter.check_rate_limit(user_id):
             result["is_secure"] = False
             result["rate_limited"] = True
             result["security_reason"] = "Rate limit exceeded"
+            result["security_severity"] = "high"
+            self.logger.warning(f"Rate limit exceeded for user {user_id}")
             return result
         
-        # Step 3: Security check (rule-based)
+        # Step 2: CRITICAL - Rule-based security check (PRIMARY GATE)
         security_check = self.security_filter.check_query_security(query)
         if not security_check["is_secure"]:
+            # REJECTED - Do not proceed with ANY processing
             result["is_secure"] = False
             result["security_reason"] = security_check.get("reason")
+            result["security_severity"] = security_check.get("severity", "high")
+            
+            # Log security violation
+            self.security_auditor.log_security_violation(
+                user_id or "anonymous",
+                query,
+                security_check.get("reason", "unknown"),
+                f"Severity: {security_check.get('severity', 'unknown')}"
+            )
+            
+            self.logger.warning(
+                f"SECURITY BLOCK: User {user_id or 'anonymous'} | "
+                f"Reason: {result['security_reason']} | "
+                f"Severity: {result['security_severity']}"
+            )
+            
+            # Return immediately - NO enhancement, NO LLM processing
             return result
         
-        # Step 4: Enhance query with LLM (optional)
+        # Step 3: Detect language (only if query is secure)
+        language = self.config.detect_language(query)
+        result["language"] = language
+        self.logger.info(f"Detected language: {language}")
+        
+        # Step 4: Enhance query with LLM (ONLY if secure and model available)
+        # This is now SAFE because dangerous queries were already rejected
         try:
-            if self.model:  # Only if model is set
+            if self.model:
                 enhanced = self._enhance_query(query, language)
                 if enhanced and enhanced != query:
                     result["processed_query"] = enhanced
         except Exception as e:
             self.logger.error(f"Query enhancement failed: {e}")
+            # If enhancement fails, continue with original query
         
-        # Step 5: LLM security analysis (if conversation exists)
+        # Step 5: LLM analysis for continuation (ONLY if conversation exists)
         if conversation_history and len(conversation_history) > 0:
             try:
-                if self.model:  # Only if model is set
+                if self.model:
                     analysis = self._analyze_query_with_llm(
                         query, conversation_history, language
                     )
-                    result.update(analysis)
+                    # Only update continuation flag from LLM analysis
+                    # Security status is ONLY determined by rule-based filter above
+                    if "is_continuation" in analysis:
+                        result["is_continuation"] = analysis["is_continuation"]
             except Exception as e:
                 self.logger.error(f"LLM analysis failed: {e}")
         
@@ -113,6 +144,8 @@ class LegalQAService:
     def _enhance_query(self, query, language):
         """
         Enhance query clarity using LLM
+        
+        NOTE: This is only called for queries that passed security checks
         
         Args:
             query: Original query
@@ -125,22 +158,21 @@ class LegalQAService:
             return query
             
         try:
-            # Get language-specific prompt - FIX: use correct template name
+            # Get language-specific prompt
             template = self.config.get_prompt_template(
-                "preprocess_system_prompt",  # Fixed: was "preprocess_system"
+                "preprocess_system_prompt",
                 language
             )
             prompt = template.format(query=query)
             
             # Generate enhanced query using BilingualLLMService
-            # FIX: Use generate_completion() instead of generate_content()
             response_generator = self.model.generate_completion(
                 prompt, 
                 language=language,
                 stream=False
             )
             
-            # FIX: Consume the generator to get the actual text
+            # Consume the generator to get the actual text
             enhanced = ''.join(response_generator).strip()
             
             if enhanced and enhanced != query:
@@ -154,7 +186,10 @@ class LegalQAService:
     
     def _analyze_query_with_llm(self, query, history, language):
         """
-        Use LLM to analyze query security and continuation
+        Use LLM to analyze query for continuation detection
+        
+        NOTE: Security decisions are NOT made here - only continuation detection
+        Rule-based security filter is the authoritative security gate
         
         Args:
             query: User query
@@ -162,7 +197,7 @@ class LegalQAService:
             language: 'ar' or 'fr'
         
         Returns:
-            dict: Analysis results
+            dict: Analysis results (only continuation flag)
         """
         if not self.model:
             return {}
@@ -172,27 +207,21 @@ class LegalQAService:
             prompt = self._build_analysis_prompt(query, history, language)
             
             # Generate analysis using BilingualLLMService
-            # FIX: Use generate_completion() instead of generate_content()
             response_generator = self.model.generate_completion(
                 prompt,
                 language=language,
                 stream=False
             )
             
-            # FIX: Consume the generator to get the actual text
+            # Consume the generator to get the actual text
             response_text = ''.join(response_generator).strip()
             
-            # Parse response
+            # Parse response - ONLY extract continuation flag
             result = {
-                "is_continuation": "true" in response_text.lower().split("is_continuation:")[1].split("\n")[0] if "is_continuation:" in response_text else False,
-                "is_secure": not ("false" in response_text.lower().split("is_secure:")[1].split("\n")[0]) if "is_secure:" in response_text else True
+                "is_continuation": "true" in response_text.lower().split("is_continuation:")[1].split("\n")[0] if "is_continuation:" in response_text else False
             }
             
-            # Extract security reason
-            if not result["is_secure"] and "security_reason:" in response_text:
-                result["security_reason"] = response_text.split("security_reason:")[1].split("\n")[0].strip()
-            
-            # Extract processed query
+            # Extract processed query if available
             if "processed_query:" in response_text:
                 processed = response_text.split("processed_query:")[1].split("\n")[0].strip()
                 if processed:
@@ -214,8 +243,8 @@ class LegalQAService:
                 role = "Utilisateur" if msg["role"] == "user" else "Assistant"
             history_text += f"{role}: {msg['content']}\n\n"
         
-        # Get template and fill - FIX: use correct template name
-        template = self.config.get_prompt_template("analysis_system_prompt", language)  # Fixed
+        # Get template and fill
+        template = self.config.get_prompt_template("analysis_system_prompt", language)
         return template.format(history=history_text, query=query)
     
     def generate_answer(self, query, context_chunks, conversation_history=None, user_id=None):
@@ -247,21 +276,27 @@ class LegalQAService:
             # Handle rate limiting
             if query_result.get("rate_limited"):
                 return self._build_error_response(
-                    "Rate limit exceeded" if query_result["language"] == 'fr' 
-                    else "تجاوز الحد المسموح",
+                    "Limite de requêtes dépassée. Réessayez dans quelques instants." if query_result.get("language") == 'fr' 
+                    else "تجاوز الحد المسموح. يرجى المحاولة بعد قليل.",
                     "rate_limited",
                     event_id,
-                    query_result["language"]
+                    query_result.get("language", "ar")
                 )
             
             # Handle security violations
             if not query_result["is_secure"]:
+                severity = query_result.get("security_severity", "high")
+                self.logger.warning(
+                    f"Security violation detected | Event: {event_id} | "
+                    f"Severity: {severity} | Reason: {query_result.get('security_reason')}"
+                )
+                
                 return self._build_error_response(
-                    "Requête non autorisée" if query_result["language"] == 'fr'
-                    else "طلب غير مصرح به",
+                    "Requête non autorisée. Veuillez reformuler votre question de manière appropriée." if query_result.get("language") == 'fr'
+                    else "طلب غير مصرح به. يرجى إعادة صياغة سؤالك بشكل مناسب.",
                     "rejected",
                     event_id,
-                    query_result["language"]
+                    query_result.get("language", "ar")
                 )
             
             # Step 2: Get processed query and language
@@ -282,14 +317,13 @@ class LegalQAService:
             if not self.model:
                 raise Exception("LLM model not initialized")
             
-            # FIX: Use generate_completion() instead of generate_content()
             response_generator = self.model.generate_completion(
                 prompt,
                 language=language,
                 stream=False
             )
             
-            # FIX: Consume the generator to get the actual text
+            # Consume the generator to get the actual text
             answer_text = ''.join(response_generator).strip()
             
             # Log success
@@ -383,8 +417,8 @@ class LegalQAService:
             else:
                 formatted_chunks += f"المستند {i}:\n{chunk}\n\n"
         
-        # Get template and fill - FIX: use correct template name
-        template = self.config.get_prompt_template("answer_system_prompt", language)  # Fixed
+        # Get template and fill
+        template = self.config.get_prompt_template("answer_system_prompt", language)
         return template.format(
             conversation_context=conversation_context,
             query=query,

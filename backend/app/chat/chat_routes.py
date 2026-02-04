@@ -176,6 +176,9 @@ def delete_conversation(conversation_id):
 
 
 
+import json
+from flask import Response, stream_with_context, jsonify, request, g, current_app
+
 @chat_bp.route("/chat_stream", methods=["GET", "POST"])
 @jwt_required
 def chat_stream():
@@ -199,36 +202,157 @@ def chat_stream():
         if not message:
             return jsonify({"error": "Missing message"}), 400
 
-        # --- SECURITY LAYER (NEW) ---
+        # --- ENHANCED SECURITY LAYER (STRICTER) ---
         qa_service = get_qa_service()
         
-        # Quick security check
+        # STEP 1: IMMEDIATE RULE-BASED SECURITY CHECK (PRIMARY GATE)
+        # This is the CRITICAL security gate - queries that fail here are REJECTED IMMEDIATELY
         security_check = qa_service.security_filter.check_query_security(message)
         
-        # Log the query
+        # Detect language for error messages
+        detected_language = qa_service.config.detect_language(message)
+        if language == 'auto':
+            language = detected_language
+        
+        # Log the query with security status
         event_id = qa_service.security_auditor.log_query(
             user_id, 
             message, 
-            "secure" if security_check["is_secure"] else "rejected"
+            "secure" if security_check["is_secure"] else "rejected",
+            language=detected_language
         )
 
-        # Handle security violations
+        # CRITICAL: If security check fails, STOP IMMEDIATELY
+        # Do NOT proceed with:
+        # - Rate limiting check
+        # - Query enhancement
+        # - LLM processing
+        # - Document search
+        # - Answer generation
         if not security_check["is_secure"]:
-            qa_service.security_auditor.log_response(user_id, event_id, "rejected")
+            severity = security_check.get("severity", "high")
+            reason = security_check.get("reason", "Security violation")
             
-            error_msg = (
-                f"Requête non autorisée: {security_check.get('reason')}"
-                if language == 'fr'
-                else f"طلب غير مصرح به: {security_check.get('reason')}"
+            # Log the security violation
+            qa_service.security_auditor.log_security_violation(
+                user_id,
+                message,
+                reason,
+                f"Severity: {severity}"
             )
             
-            return jsonify({
-                "error": "Security violation", 
-                "message": error_msg,
-                "event_id": event_id
-            }), 403
+            qa_service.security_auditor.log_response(user_id, event_id, "rejected")
+            
+            # Return generic hardcoded error message (don't reveal detection details)
+            if language == 'fr':
+                error_msg = "Votre requête ne peut pas être traitée. Veuillez reformuler votre question de manière appropriée concernant des sujets juridiques."
+            else:
+                error_msg = "لا يمكن معالجة طلبك. يرجى إعادة صياغة سؤالك بشكل مناسب حول مواضيع قانونية."
+            
+            current_app.logger.warning(
+                f"SECURITY BLOCK | Event: {event_id} | User: {user_id} | "
+                f"Severity: {severity} | Reason: {reason}"
+            )
+            
+            # Create or get conversation
+            if conversation_id:
+                conv = chat_models.get_conversation_for_user(int(conversation_id), user_id)
+                if not conv:
+                    conversation_id = chat_models.create_conversation(user_id, title=message[:60])
+            else:
+                title = message[:60]
+                conversation_id = chat_models.create_conversation(user_id, title=title)
+            
+            # Store user message
+            chat_models.insert_message(
+                conversation_id,
+                role="user",
+                content=message,
+                sender_user_id=user_id
+            )
+            
+            # Return security rejection as streamed SSE message
+            def stream_security_rejection():
+                # Stream the error message as if it were an LLM response
+                yield f"data: {json.dumps({'content': error_msg})}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                
+                # Store assistant message
+                chat_models.insert_message(
+                    conversation_id,
+                    role="assistant",
+                    content=error_msg,
+                    sender_user_id=None
+                )
+            
+            return Response(
+                stream_with_context(stream_security_rejection()),
+                mimetype="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "X-Language": language,
+                    "X-Event-ID": event_id,
+                    "X-Security-Status": "rejected",
+                    "X-Security-Severity": severity
+                }
+            )
 
-        # Fetch conversation history for enhancement
+        # STEP 2: Rate limiting check (only for secure queries)
+        if not qa_service.rate_limiter.check_rate_limit(user_id):
+            qa_service.security_auditor.log_response(user_id, event_id, "rate_limited")
+            
+            error_msg = (
+                "Limite de requêtes dépassée. Veuillez réessayer dans quelques instants."
+                if language == 'fr'
+                else "تجاوز الحد المسموح. يرجى المحاولة بعد قليل."
+            )
+            
+            current_app.logger.warning(f"Rate limit exceeded for user {user_id}")
+            
+            # Create or get conversation
+            if conversation_id:
+                conv = chat_models.get_conversation_for_user(int(conversation_id), user_id)
+                if not conv:
+                    conversation_id = chat_models.create_conversation(user_id, title=message[:60])
+            else:
+                title = message[:60]
+                conversation_id = chat_models.create_conversation(user_id, title=title)
+            
+            # Store user message
+            chat_models.insert_message(
+                conversation_id,
+                role="user",
+                content=message,
+                sender_user_id=user_id
+            )
+            
+            # Return rate limit as streamed SSE message
+            def stream_rate_limit_rejection():
+                yield f"data: {json.dumps({'content': error_msg})}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                
+                # Store assistant message
+                chat_models.insert_message(
+                    conversation_id,
+                    role="assistant",
+                    content=error_msg,
+                    sender_user_id=None
+                )
+            
+            return Response(
+                stream_with_context(stream_rate_limit_rejection()),
+                mimetype="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "X-Language": language,
+                    "X-Event-ID": event_id,
+                    "X-Security-Status": "rate_limited"
+                }
+            )
+
+        # Fetch conversation history for enhancement (only for secure queries)
         history = []
         if conversation_id:
             try:
@@ -239,59 +363,77 @@ def chat_stream():
             except Exception as e:
                 logger.warning(f"Could not fetch history: {e}")
         
-        # Process query (enhancement + continuation detection)
+        # STEP 3: Process query (enhancement + continuation detection)
+        # This is now SAFE because dangerous queries were already rejected
         processed_result = qa_service.preprocess_query(
             message, 
             conversation_history=history, 
             user_id=user_id
         )
         
-        # Handle rate limiting
-        if processed_result.get("rate_limited"):
-            qa_service.security_auditor.log_response(user_id, event_id, "rate_limited")
-            
-            error_msg = (
-                "Limite de requêtes dépassée. Réessayez dans quelques instants."
-                if processed_result["language"] == 'fr'
-                else "تجاوز الحد المسموح. يرجى المحاولة بعد قليل."
-            )
-            
-            return jsonify({
-                "error": "Rate limit exceeded",
-                "message": error_msg,
-                "event_id": event_id
-            }), 429
-
-        # Handle LLM security violations
+        # Double-check security status (should not happen, but safety net)
         if not processed_result["is_secure"]:
             qa_service.security_auditor.log_response(user_id, event_id, "rejected")
             
             error_msg = (
-                f"Requête non autorisée: {processed_result.get('security_reason', '')}"
-                if processed_result["language"] == 'fr'
-                else f"طلب غير مصرح به: {processed_result.get('security_reason', '')}"
+                "Votre requête ne peut pas être traitée. Veuillez reformuler votre question."
+                if language == 'fr'
+                else "لا يمكن معالجة طلبك. يرجى إعادة صياغة سؤالك."
             )
             
-            return jsonify({
-                "error": "Security violation",
-                "message": error_msg,
-                "event_id": event_id
-            }), 403
+            # Create or get conversation
+            if conversation_id:
+                conv = chat_models.get_conversation_for_user(int(conversation_id), user_id)
+                if not conv:
+                    conversation_id = chat_models.create_conversation(user_id, title=message[:60])
+            else:
+                title = message[:60]
+                conversation_id = chat_models.create_conversation(user_id, title=title)
+            
+            # Store user message
+            chat_models.insert_message(
+                conversation_id,
+                role="user",
+                content=message,
+                sender_user_id=user_id
+            )
+            
+            # Return as streamed SSE message
+            def stream_secondary_rejection():
+                yield f"data: {json.dumps({'content': error_msg})}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                
+                # Store assistant message
+                chat_models.insert_message(
+                    conversation_id,
+                    role="assistant",
+                    content=error_msg,
+                    sender_user_id=None
+                )
+            
+            return Response(
+                stream_with_context(stream_secondary_rejection()),
+                mimetype="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "X-Language": language,
+                    "X-Event-ID": event_id,
+                    "X-Security-Status": "rejected"
+                }
+            )
 
         # Extract enhanced query
         optimized_query = processed_result["processed_query"]
         detected_language = processed_result["language"]
         
-        # --- END SECURITY LAYER ---
-
-        # 2. Language Detection (use detected language from QA service)
-        lang_service = get_language_service()
+        # Use detected language if auto mode
         if language == 'auto':
-            language = detected_language  # Use QA service detection
-        else:
-            language = lang_service.normalize_language(language)
+            language = detected_language
         
-        # 3. Manage Conversation
+        # --- END ENHANCED SECURITY LAYER ---
+
+        # 2. Manage Conversation
         if conversation_id:
             conv = chat_models.get_conversation_for_user(int(conversation_id), user_id)
             if not conv: 
@@ -300,7 +442,7 @@ def chat_stream():
             title = message[:60]
             conversation_id = chat_models.create_conversation(user_id, title=title)
 
-        # 4. Store User Message (store ORIGINAL message)
+        # 3. Store User Message (store ORIGINAL message)
         chat_models.insert_message(
             conversation_id, 
             role="user", 
@@ -308,7 +450,8 @@ def chat_stream():
             sender_user_id=user_id
         )
 
-        # 5. Search Documents (use OPTIMIZED query for better retrieval)
+        # 4. Search Documents (use OPTIMIZED query for better retrieval)
+        # This only happens for SECURE queries
         srch_service = get_search_service()
         results = srch_service.hybrid_search(
             optimized_query,  # Use enhanced query
@@ -318,7 +461,7 @@ def chat_stream():
 
         # Enhanced Logging
         current_app.logger.info(
-            f"Event: {event_id} | Lang: {language} | "
+            f"SECURE QUERY | Event: {event_id} | Lang: {language} | "
             f"Original: {message[:40]}... | Enhanced: {optimized_query[:40]}..."
         )
         
@@ -332,7 +475,7 @@ def chat_stream():
 
         vectors_json_str = json.dumps(results, ensure_ascii=False)
 
-        # 6. Stream Response (use your existing implementation)
+        # 5. Stream Response (use your existing implementation)
         return Response(
             stream_with_context(
                 stream_assistant_reply(
@@ -348,7 +491,8 @@ def chat_stream():
                 "X-Accel-Buffering": "no",
                 "X-Language": language,
                 "X-Event-ID": event_id,
-                "X-Query-Enhanced": "true" if optimized_query != message else "false"
+                "X-Query-Enhanced": "true" if optimized_query != message else "false",
+                "X-Security-Status": "secure"
             }
         )
 
@@ -366,7 +510,7 @@ def chat_stream():
             except:
                 pass
         
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": f"Server error: {str(e)}"}), 500    
 
 
 # Optional: Statistics endpoint
