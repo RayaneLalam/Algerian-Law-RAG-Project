@@ -4,11 +4,6 @@ import hashlib
 from datetime import datetime
 from typing import Dict, List, Optional
 
-# Import your LLM and config
-# from app.services.llm_service.factory import create_llm
-# from legal_qa_config import LegalQAConfig
-# from qa_sec import SecurityFilter, RateLimiter, SecurityAuditor
-
 
 class LegalQAService:
     """
@@ -22,18 +17,21 @@ class LegalQAService:
         self.logger.info("Initializing Legal QA Service")
         
         # Load configuration
-        # self.config = LegalQAConfig(config_path)
+        from .legal_qa_config import LegalQAConfig
+        self.config = LegalQAConfig(config_path)
         
-        # Initialize LLM (your teammate's model)
-        # self.model = create_llm()
+        # Initialize LLM (your teammate's model) - will be set externally
+        self.model = None
         
         # Initialize security components
-        # self.security_filter = SecurityFilter(self.config)
-        # self.rate_limiter = RateLimiter(
-        #     self.config.rate_limit_max_requests,
-        #     self.config.rate_limit_window_seconds
-        # )
-        # self.security_auditor = SecurityAuditor()
+        from .legal_qa_sec import SecurityFilter, RateLimiter, SecurityAuditor
+        
+        self.security_filter = SecurityFilter(self.config)
+        self.rate_limiter = RateLimiter(
+            self.config.rate_limit_max_requests,
+            self.config.rate_limit_window_seconds
+        )
+        self.security_auditor = SecurityAuditor()
         
         self.logger.info("Legal QA Service initialized")
     
@@ -92,19 +90,21 @@ class LegalQAService:
         
         # Step 4: Enhance query with LLM (optional)
         try:
-            enhanced = self._enhance_query(query, language)
-            if enhanced:
-                result["processed_query"] = enhanced
+            if self.model:  # Only if model is set
+                enhanced = self._enhance_query(query, language)
+                if enhanced and enhanced != query:
+                    result["processed_query"] = enhanced
         except Exception as e:
             self.logger.error(f"Query enhancement failed: {e}")
         
         # Step 5: LLM security analysis (if conversation exists)
         if conversation_history and len(conversation_history) > 0:
             try:
-                analysis = self._analyze_query_with_llm(
-                    query, conversation_history, language
-                )
-                result.update(analysis)
+                if self.model:  # Only if model is set
+                    analysis = self._analyze_query_with_llm(
+                        query, conversation_history, language
+                    )
+                    result.update(analysis)
             except Exception as e:
                 self.logger.error(f"LLM analysis failed: {e}")
         
@@ -121,22 +121,30 @@ class LegalQAService:
         Returns:
             str: Enhanced query
         """
+        if not self.model:
+            return query
+            
         try:
-            # Get language-specific prompt
+            # Get language-specific prompt - FIX: use correct template name
             template = self.config.get_prompt_template(
-                "preprocess_system", 
+                "preprocess_system_prompt",  # Fixed: was "preprocess_system"
                 language
             )
             prompt = template.format(query=query)
             
-            # Generate enhanced query
-            response = self.model.generate_content(
+            # Generate enhanced query using BilingualLLMService
+            # FIX: Use generate_completion() instead of generate_content()
+            response_generator = self.model.generate_completion(
                 prompt, 
-                system_prompt=template
+                language=language,
+                stream=False
             )
-            enhanced = response.text.strip()
+            
+            # FIX: Consume the generator to get the actual text
+            enhanced = ''.join(response_generator).strip()
             
             if enhanced and enhanced != query:
+                self.logger.info(f"Enhanced query: {query[:50]}... -> {enhanced[:50]}...")
                 return enhanced
             return query
             
@@ -156,36 +164,45 @@ class LegalQAService:
         Returns:
             dict: Analysis results
         """
-        # Build analysis prompt
-        prompt = self._build_analysis_prompt(query, history, language)
-        
-        # Get system prompt for analysis
-        system_prompt = self.config.get_prompt_template(
-            "analysis_system",
-            language
-        )
-        
-        # Generate analysis
-        response = self.model.generate_content(prompt, system_prompt=system_prompt)
-        response_text = response.text
-        
-        # Parse response
-        result = {
-            "is_continuation": "true" in response_text.lower().split("is_continuation:")[1].split("\n")[0] if "is_continuation:" in response_text else False,
-            "is_secure": not ("false" in response_text.lower().split("is_secure:")[1].split("\n")[0]) if "is_secure:" in response_text else True
-        }
-        
-        # Extract security reason
-        if not result["is_secure"] and "security_reason:" in response_text:
-            result["security_reason"] = response_text.split("security_reason:")[1].split("\n")[0].strip()
-        
-        # Extract processed query
-        if "processed_query:" in response_text:
-            processed = response_text.split("processed_query:")[1].split("\n")[0].strip()
-            if processed:
-                result["processed_query"] = processed
-        
-        return result
+        if not self.model:
+            return {}
+            
+        try:
+            # Build analysis prompt
+            prompt = self._build_analysis_prompt(query, history, language)
+            
+            # Generate analysis using BilingualLLMService
+            # FIX: Use generate_completion() instead of generate_content()
+            response_generator = self.model.generate_completion(
+                prompt,
+                language=language,
+                stream=False
+            )
+            
+            # FIX: Consume the generator to get the actual text
+            response_text = ''.join(response_generator).strip()
+            
+            # Parse response
+            result = {
+                "is_continuation": "true" in response_text.lower().split("is_continuation:")[1].split("\n")[0] if "is_continuation:" in response_text else False,
+                "is_secure": not ("false" in response_text.lower().split("is_secure:")[1].split("\n")[0]) if "is_secure:" in response_text else True
+            }
+            
+            # Extract security reason
+            if not result["is_secure"] and "security_reason:" in response_text:
+                result["security_reason"] = response_text.split("security_reason:")[1].split("\n")[0].strip()
+            
+            # Extract processed query
+            if "processed_query:" in response_text:
+                processed = response_text.split("processed_query:")[1].split("\n")[0].strip()
+                if processed:
+                    result["processed_query"] = processed
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"LLM analysis error: {e}")
+            return {}
     
     def _build_analysis_prompt(self, query, history, language):
         """Build prompt for query analysis"""
@@ -197,8 +214,8 @@ class LegalQAService:
                 role = "Utilisateur" if msg["role"] == "user" else "Assistant"
             history_text += f"{role}: {msg['content']}\n\n"
         
-        # Get template and fill
-        template = self.config.get_prompt_template("analysis_system", language)
+        # Get template and fill - FIX: use correct template name
+        template = self.config.get_prompt_template("analysis_system_prompt", language)  # Fixed
         return template.format(history=history_text, query=query)
     
     def generate_answer(self, query, context_chunks, conversation_history=None, user_id=None):
@@ -261,15 +278,19 @@ class LegalQAService:
                 language
             )
             
-            # Get system prompt for answering
-            system_prompt = self.config.get_prompt_template(
-                "answer_system",
-                language
+            # Step 4: Generate answer
+            if not self.model:
+                raise Exception("LLM model not initialized")
+            
+            # FIX: Use generate_completion() instead of generate_content()
+            response_generator = self.model.generate_completion(
+                prompt,
+                language=language,
+                stream=False
             )
             
-            # Step 4: Generate answer
-            response = self.model.generate_content(prompt, system_prompt=system_prompt)
-            answer_text = response.text
+            # FIX: Consume the generator to get the actual text
+            answer_text = ''.join(response_generator).strip()
             
             # Log success
             self.security_auditor.log_response(
@@ -362,8 +383,8 @@ class LegalQAService:
             else:
                 formatted_chunks += f"المستند {i}:\n{chunk}\n\n"
         
-        # Get template and fill
-        template = self.config.get_prompt_template("answer_system", language)
+        # Get template and fill - FIX: use correct template name
+        template = self.config.get_prompt_template("answer_system_prompt", language)  # Fixed
         return template.format(
             conversation_context=conversation_context,
             query=query,
