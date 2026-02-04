@@ -124,16 +124,37 @@ export const App = () => {
         const lines = chunk
           .split("\n")
           .filter((line) => line.startsWith("data:"))
-          .map((line) => line.replace(/^data:\s*/, "").trim());
+          .map((line) => line.replace(/^data:\s*/, "").trim())
+          .filter((line) => line.length > 0);
 
         for (const line of lines) {
-          if (line === "[DONE]") break;
-          displayedText += line + " ";
-          setMessages((prev) => {
-            const updated = [...prev];
-            updated[updated.length - 1].content = displayedText.trim();
-            return updated;
-          });
+          // Parse JSON to extract the actual text content
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed.status === "[DONE]") {
+              break;
+            }
+            // Extract chunk content from JSON object
+            const text = parsed.chunk || parsed.error || "";
+            if (text && text !== "[DONE]") {
+              displayedText += text;
+              setMessages((prev) => {
+                const updated = [...prev];
+                updated[updated.length - 1].content = displayedText.trim();
+                return updated;
+              });
+            }
+          } catch (e) {
+            // If not JSON, treat as raw text (fallback for backward compatibility)
+            if (line !== "[DONE]" && line.length > 0) {
+              displayedText += line + " ";
+              setMessages((prev) => {
+                const updated = [...prev];
+                updated[updated.length - 1].content = displayedText.trim();
+                return updated;
+              });
+            }
+          }
         }
       }
       await fetchConversations();

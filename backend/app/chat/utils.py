@@ -37,16 +37,20 @@ def stream_assistant_reply_demo(message, vectors_json_str, language: str = 'fr')
     """
     Demo streaming (no auth) - doesn't save to database.
     Just yields SSE chunks without persisting.
+    Properly encodes Arabic and non-ASCII text to prevent corruption.
     """
     try:
         for chunk in make_reply_stream(message, vectors_json_str, language=language):
-            yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+            # Properly encode chunk as JSON to preserve Unicode/Arabic characters
+            encoded_chunk = json.dumps({'chunk': chunk}, ensure_ascii=False)
+            yield f"data: {encoded_chunk}\n\n"
     except GeneratorExit:
         current_app.logger.debug("Client disconnected from SSE stream")
     except Exception as e:
         err = f"[server error while generating reply: {e}]"
         current_app.logger.exception("stream_assistant_reply_demo error")
-        yield f"data: {json.dumps({'chunk': err})}\n\n"
+        error_response = json.dumps({'error': err}, ensure_ascii=False)
+        yield f"data: {error_response}\n\n"
 
 
 def stream_assistant_reply(message, vectors_json_str, conversation_id, language: str = 'fr'):
@@ -54,26 +58,29 @@ def stream_assistant_reply(message, vectors_json_str, conversation_id, language:
     Generator that yields SSE chunks from make_reply_stream(...).
     On finish (or partial finish), saves the concatenated assistant message
     into the DB and updates conversation timestamp.
+    Properly encodes Arabic text to prevent corruption.
     """
     assistant_chunks = []
     try:
         for chunk in make_reply_stream(message, vectors_json_str, language=language):
             assistant_chunks.append(chunk)
-            # Send chunk in SSE format without JSON wrapping
-            yield f"data: {chunk}\n\n"
+            # Send chunk in SSE format with proper JSON encoding to prevent corruption
+            # This is critical for Arabic and other non-ASCII text
+            encoded_chunk = json.dumps({'chunk': chunk}, ensure_ascii=False)
+            yield f"data: {encoded_chunk}\n\n"
         
         # Signal completion
-        yield "data: [DONE]\n\n"
+        yield "data: {\"status\": \"[DONE]\"}\n\n"
         
     except GeneratorExit:
         current_app.logger.debug("Client disconnected from SSE stream")
     except Exception as e:
         err = f"[server error while generating reply: {e}]"
         assistant_chunks.append(err)
-        yield f"data: {err}\n\n"
+        error_response = json.dumps({'error': err}, ensure_ascii=False)
+        yield f"data: {error_response}\n\n"
     finally:
         # join and persist assistant full text (even if partial)
-        print("got here")
         assistant_full = "".join(assistant_chunks).strip()
         if assistant_full and conversation_id:
             try:

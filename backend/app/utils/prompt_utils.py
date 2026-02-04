@@ -69,6 +69,10 @@ def _format_context_from_results(results, language: str = 'fr'):
         lines.append(f"{i}. {titre} — {short_text}{score_str}")
     
     if not lines:
-        return "No context found." if language not in ('ar', 'arabic', 'العربية') else "لم يتم العثور على سياق."
+        # Provide helpful guidance when no context is found
+        if language in ('ar', 'arabic', 'العربية'):
+            return "[تنبيه: لم يتم العثور على وثائق ذات صلة مباشرة في قاعدة البيانات. يرجى محاولة إعادة صياغة السؤال أو التشاور مع متخصص قانوني.]"
+        else:
+            return "[Attention: Aucun document directement pertinent trouvé dans la base de données. Veuillez reformuler votre question ou consulter un professionnel du droit.]"
     
     return "\n".join(lines)

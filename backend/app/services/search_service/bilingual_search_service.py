@@ -50,15 +50,15 @@ class BilingualSearchService:
     
     def _initialize_embedders(self):
         """Initialize embedding models from cache (no downloading)."""
-        device = os.getenv('COMPUTE_DEVICE', 'cuda').lower()
-        if device not in ['cuda', 'cpu']:
-            device = 'cuda'
+        # Use CPU for embeddings to avoid CUDA compatibility issues
+        # while keeping CUDA available for LLM inference
+        embedding_device = 'cpu'
         
         try:
-            logger.info(f"Initializing embedding models on {device}...")
+            logger.info(f"Initializing embedding models on {embedding_device}...")
             # Load French embedder
             try:
-                self.french_embedder = SentenceTransformer(self.settings.FRENCH_EMBEDDING_MODEL, local_files_only=True, device=device)
+                self.french_embedder = SentenceTransformer(self.settings.FRENCH_EMBEDDING_MODEL, local_files_only=True, device=embedding_device)
                 logger.info(f"✓ French embedder loaded: {self.settings.FRENCH_EMBEDDING_MODEL}")
             except Exception as e:
                 logger.error(f"Failed to load French embedder: {e}")
@@ -66,14 +66,14 @@ class BilingualSearchService:
 
             # Load Arabic embedder
             try:
-                self.arabic_embedder = SentenceTransformer(self.settings.ARABIC_EMBEDDING_MODEL, local_files_only=True, device=device)
+                self.arabic_embedder = SentenceTransformer(self.settings.ARABIC_EMBEDDING_MODEL, local_files_only=True, device=embedding_device)
                 logger.info(f"✓ Arabic embedder loaded: {self.settings.ARABIC_EMBEDDING_MODEL}")
             except Exception as e:
                 logger.error(f"Failed to load Arabic embedder: {e}")
                 self.arabic_embedder = None
 
             # Multilingual fallback
-            self.multilingual_embedder = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2', local_files_only=True, device=device)
+            self.multilingual_embedder = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2', local_files_only=True, device=embedding_device)
         except Exception as e:
             logger.error(f"Embedder initialization error: {e}")
 
