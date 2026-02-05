@@ -97,7 +97,6 @@ export const App = () => {
     setMessages(updatedMessages);
 
     try {
-      const testModelVersionId = "default-model-v1";
       const response = await fetch("http://localhost:5000/chat_stream", {
         method: "POST",
         headers: {
@@ -107,7 +106,7 @@ export const App = () => {
         body: JSON.stringify({
           message: userMessage,
           conversation_id: currentConversationId,
-          model_version_id: testModelVersionId,
+          language: language,
         }),
       });
 
@@ -120,6 +119,7 @@ export const App = () => {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        
         const chunk = decoder.decode(value, { stream: true });
         const lines = chunk
           .split("\n")
@@ -128,22 +128,39 @@ export const App = () => {
 
         for (const line of lines) {
           if (line === "[DONE]") break;
-          displayedText += line + " ";
-          setMessages((prev) => {
-            const updated = [...prev];
-            updated[updated.length - 1].content = displayedText.trim();
-            return updated;
-          });
+
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed.done) break;
+            
+            // Extract the content and append it WITHOUT adding extra spaces
+            const content = parsed.content || parsed.chunk || "";
+            displayedText += content; 
+
+            setMessages((prev) => {
+              const updated = [...prev];
+              // We don't .trim() here because we want to preserve 
+              // the natural spaces the LLM provides
+              updated[updated.length - 1].content = displayedText;
+              return updated;
+            });
+          } catch (e) {
+            console.error("Error parsing SSE JSON:", e);
+          }
         }
       }
       await fetchConversations();
+      
+      // Auto-select conversation ID if it was a new chat
       if (!currentConversationId) {
         const convResponse = await fetch("http://localhost:5000/conversations", {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (convResponse.ok) {
           const data = await convResponse.json();
-          if (data.conversations?.length > 0) setCurrentConversationId(parseInt(data.conversations[0].id));
+          if (data.conversations?.length > 0) {
+            setCurrentConversationId(parseInt(data.conversations[0].id));
+          }
         }
       }
     } catch (err) {

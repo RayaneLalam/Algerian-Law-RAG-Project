@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 class BilingualLLMService:
     """
-    Bilingual LLM service using Ollama (deepseek-r1:8b) for local inference 
+    Bilingual LLM service using Ollama (gemma3:4b) for local inference 
     and OpenRouter as fallback. 
     
     Preserves original logic for:
@@ -21,7 +21,7 @@ class BilingualLLMService:
     def __init__(self):
         self.settings = settings
         self.use_local_llms = settings.USE_LOCAL_LLMS
-        self.local_model = "deepseek-r1:8b"
+        self.local_model = "gemma3:4b"
         
         # Initialize Ollama Client (OpenAI compatible)
         try:
@@ -87,7 +87,7 @@ class BilingualLLMService:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,  # Matches original strict factual mode
                 stream=stream,
-                max_tokens=800
+                max_tokens=1000
             )
 
             if stream:
@@ -193,7 +193,7 @@ class BilingualLLMService:
                 messages=[{"role": "user", "content": prompt}],
                 stream=stream,
                 temperature=0.1,
-                max_tokens=800
+                max_tokens=1000
             )
             
             if stream:
