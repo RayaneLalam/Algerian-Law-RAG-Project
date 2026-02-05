@@ -87,7 +87,7 @@ class BilingualLLMService:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,  # Matches original strict factual mode
                 stream=stream,
-                max_tokens=1000
+                max_tokens=2000
             )
 
             if stream:
@@ -193,7 +193,7 @@ class BilingualLLMService:
                 messages=[{"role": "user", "content": prompt}],
                 stream=stream,
                 temperature=0.1,
-                max_tokens=1000
+                max_tokens=2000
             )
             
             if stream:
